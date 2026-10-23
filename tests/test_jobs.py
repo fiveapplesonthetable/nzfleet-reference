@@ -13,7 +13,7 @@ from nzfleet import plan
 CI = os.path.join(os.path.dirname(__file__), "..", "..", "..", ".github", "workflows", "ci.yaml")
 WORKFLOW = yaml.safe_load(open(CI))
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-EXPRESSIONS = {"NZELA_BASE": "abc123", "CHANGED_TESTS_BASE": "", "CEILING_BASE": "abc123"}
+EXPRESSIONS = {"NZELA_BASE": "abc123", "CHANGED_TESTS_BASE": "", "CEILING_BASE": "abc123", "NZELA_WARM_SLOTS": "1"}
 
 NODE = "node:22-trixie"
 RUST = "rust:1.98-trixie"

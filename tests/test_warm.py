@@ -70,7 +70,7 @@ class TheEnvironmentAJobGetsForTheCachesMountedIntoIt(unittest.TestCase):
              patch.object(areas.docker_budget, "container_flags", side_effect=flags), \
              patch.object(areas, "_healthy", return_value=True):
             for area in ("rust", "compat", "e2e", "contract", "console"):
-                current = plan.job_for(workflow, area, {"NZELA_BASE": "abc123", "CHANGED_TESTS_BASE": "", "CEILING_BASE": "abc123"})
+                current = plan.job_for(workflow, area, {"NZELA_BASE": "abc123", "CHANGED_TESTS_BASE": "", "CEILING_BASE": "abc123", "NZELA_WARM_SLOTS": "1"})
                 target = os.path.join(temp, area)
                 os.makedirs(target, exist_ok=True)
                 mounts = {target: "/target"}

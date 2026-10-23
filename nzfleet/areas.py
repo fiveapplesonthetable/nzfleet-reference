@@ -349,7 +349,7 @@ def run(args: argparse.Namespace) -> int:
     if args.sccache and args.sccache_bin:
         os.makedirs(args.sccache, exist_ok=True)
         mounts.update({args.sccache: "/sccache", os.path.realpath(args.sccache_bin): "/usr/local/bin/sccache:ro"})
-    jobs = {area: plan.job_for(workflow, area, {"NZELA_BASE": args.main, "CEILING_BASE": args.main}) for area in args.areas}
+    jobs = {area: plan.job_for(workflow, area, {"NZELA_BASE": args.main, "CEILING_BASE": args.main, "NZELA_WARM_SLOTS": "1"}) for area in args.areas}
     try:
         allocations = cpu_sets({area: area_budget(job) for area, job in jobs.items()}, os.sched_getaffinity(0))
     except (OSError, ValueError) as error:

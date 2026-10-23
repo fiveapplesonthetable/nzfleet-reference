@@ -1070,11 +1070,15 @@ def _native_service_options(area: str, options: str, cpus: int) -> str:
     return options.replace(expression, "").strip()
 
 
-WARM_VOLUME = "${{ github.event_name != 'pull_request' && (vars.CI_WARM_DIR || (vars.CI_RUNS_ON && format('/srv/fleet/nzfleet/ci-cache/repo-{0}', github.repository_id))) || format('nzela-warm-{0}', github.run_id) }}:/warm"
+# A pull request may name its own warm directory; a batch is never a pull request, so both forms mean the same to it.
+WARM_VOLUMES = {"${{ github.event_name != 'pull_request' && (vars.CI_WARM_DIR || (vars.CI_RUNS_ON && format('/srv/fleet/nzfleet/ci-cache/repo-{0}', github.repository_id))) || format('nzela-warm-{0}', github.run_id) }}:/warm",
+                "${{ github.event_name != 'pull_request' && (vars.CI_WARM_DIR || (vars.CI_RUNS_ON && format('/srv/fleet/nzfleet/ci-cache/repo-{0}', github.repository_id))) || (vars.CI_PR_WARM_DIR || format('nzela-warm-{0}', github.run_id)) }}:/warm"}
 
 
 def _native_step_env(area: str, values: dict) -> dict:
-    supported = {"CI_WARM_OVERRIDE": "${{ github.event_name != 'pull_request' && vars.CI_WARM_DIR || '' }}", "CI_SELF_HOSTED": "${{ github.event_name != 'pull_request' && vars.CI_RUNS_ON || '' }}"}
+    supported = {"CI_WARM_OVERRIDE": {"${{ github.event_name != 'pull_request' && vars.CI_WARM_DIR || '' }}",
+                                      "${{ github.event_name != 'pull_request' && vars.CI_WARM_DIR || (github.event_name == 'pull_request' && vars.CI_PR_WARM_DIR) || '' }}"},
+                 "CI_SELF_HOSTED": {"${{ github.event_name != 'pull_request' && vars.CI_RUNS_ON || '' }}"}}
     result = {}
     for key, value in values.items():
         if "${{" in str(value):
@@ -1089,7 +1093,7 @@ def _native_step_env(area: str, values: dict) -> dict:
             if selected:
                 result[key] = "true" if selected[1] == area else "false"
                 continue
-            if supported.get(key) != value:
+            if value not in supported.get(key, ()):
                 raise ValueError(f"{area}: unsupported step environment {key}={value!r}")
             result[key] = "native-cache" if key == "CI_WARM_OVERRIDE" else "native"
         else:
@@ -1173,7 +1177,7 @@ def job_for(workflow: dict, area: str, expressions: dict) -> Job:
     cpus = _self_hosted_cpus(area, container.get("options", ""))
     service_cpus = _self_hosted_cpus(area, service.get("options", "")) if service else 0
     volumes = container.get("volumes") or []
-    if volumes and volumes != [WARM_VOLUME]:
+    if volumes and (len(volumes) != 1 or volumes[0] not in WARM_VOLUMES):
         raise ValueError(f"{area}: unsupported container volumes {volumes!r}")
     if service:
         service["options"] = _native_service_options(area, service["options"], service_cpus)
