@@ -50,7 +50,8 @@ nzfleet grew over six weeks, one incident at a time. Most of it is right, some o
 These came from incidents, and shunt should enforce them rather than trust each brief to repeat them:
 
 - No tool attribution in commits or PRs: no Co-Authored-By trailer, no "generated with" line.
-- Zero time-based tests. A test never waits a set time, never asserts a deadline or a speed, and never sleeps. It waits for the state it needs and asserts order or state. Benchmarks are not tests and do not run in the suite. A raised timeout is never a fix.
+- No single test is time-based. A test never waits a set time, never asserts a deadline or a speed, and never sleeps; it waits for the state it needs and asserts order or state, so it passes or fails the same way on a loaded machine. Benchmarks are not tests and do not run in the suite. A raised timeout is never a fix.
+- Every suite, harness and batch area does have one overall time cap, so nothing can hang forever. Hitting the cap is reported as a hang, naming the test that was running and the last thing it printed, never as a pass or a quiet cancellation.
 - Never `git stash` in a shared checkout; worktrees share the stash.
 - Never freeze or kill a worker that holds a Gradle or cargo lock.
 - Keep every foreground command under 10 minutes, and run longer ones in the background with a notification.
