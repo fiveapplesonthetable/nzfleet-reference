@@ -58,34 +58,32 @@ These came from incidents, and shunt should enforce them rather than trust each 
 - Credentials are read from files and never printed, echoed, or written to the log.
 - The owner merges. Agents open PRs and never merge or ask for write access.
 
-## Where shunt stands at ffe48a5
+## Where shunt stands at 03135fc
 
-This was checked on 23 October, by reading the code.
+This was checked on 23 October, by reading the code and running the suite with a clean environment.
 
-**Fixed since 1f6288a:**
-- Batch reads a real workflow. `parse_workflow_yaml` (`verify.rs:2155`) refuses tabs, unclosed quotes and bad mappings, and `expand_workflow_expr` (`verify.rs:1721-1747`) refuses any `${{ }}` it has no value for. Unsupported `if:`, `uses:` and `working-directory` fail too. The silent `cargo test` fallback is gone.
-- A batch re-reads main and the PR heads after it runs and refuses the result as `head-moved` if any moved (`fleet.rs:1405-1442`).
-- A train always runs a compile command and refuses an empty one (`fleet.rs:1849-1880`).
-- `tick` calls `decide` with plain-data inputs (`fleet.rs:2588`).
-- `FdEventWatcher` (`kit.rs:792-875`) waits on inotify, pidfd and `poll(2)`.
-- The provider trait (`dispatch.rs:1495`) has start, resume, tell, alive, stop and cost, driven from `default_providers.json` with real CLI flags, and cost reads the CLI's own usage.
-- A retry that passes is recorded as a flake and never as a pass (`fleet.rs:1448-1486`), and repeated flakes queue a fix task.
-- Stall detection counts log growth, HEAD changes, dirty files and the process tree's CPU (`watch.rs:268`).
-- No nzela word is in the crates.
+**Fixed since ffe48a5:**
+- The moved-ref refusal works when origin has no copy of a branch: live heads fall back to `refs/heads/<branch>` and main to `refs/heads/main` (`fleet.rs:1160,1220-1233`), and its test moves a real branch instead of editing the database.
+- A train compiles each slice in a scratch worktree at the starting main with every PR head merged in (`fleet.rs:2024-2092`), then refuses if main or a head moved (`fleet.rs:2122-2134`).
+- Decision inputs and plans are logged to `decision_ticks`, and `batch_outcomes` and burners are filled in.
+- Most `thread::sleep` loops in the daemon are replaced by `poll`, pidfd and signal waits.
+- A live resume with a missing worktree or log is now an error, not a quiet fallback.
+- `still_ready` lands only a batch whose status is `passed` (`land.rs:91`).
 
 What remains, most important first:
 
-0. **The suite is still red, on the new code's own tests.** `cargo test --workspace --no-fail-fast`, run with a clean environment (only HOME, PATH and the toolchain set), gives 227 passed and 2 failed. `test_strict_start_base_db_plugin_live_tell_and_batch_head_moved` (`kit_and_fleet_tests.rs:764`) never sees a batch recorded as `head-moved`, so the moved-ref refusal above is not proven to work. `test_report_diff_claims` (`test6_watch_and_report.rs:200`) expects "Commits Succeeded:    1" while the report printed "Git Worktree Status: N/A (not a git repository)". Both must pass with nothing set.
-1. **The train compiles the wrong tree.** The compile command gets `TACHO_TRAIN_SLICE_PRS` as an environment variable, but nothing builds the merged tree for the slice, so the default `cargo check --workspace` checks whatever is checked out. Build the merged tree in a scratch worktree, compile there, and refuse if main or a head moved.
-2. **Time-based tests remain.** The speed asserts are gone, but `tacho-e2e/src/lib.rs:285-302` (`wait_until`, `wait_for_api_sock`) waits with timeouts, and sleeps and deadlines remain in about 25 test files, for example `test5_daemon_restart.rs`, `test6_watch_and_report.rs:238`, `test1_replay_sequences.rs:93` and a 5 s polling deadline in `appender.rs:763-878`. No single test may be time-based: wait on the state (inotify, a pidfd, a socket's own readiness) and assert order or state. Each suite gets one overall cap that reports a hang, naming the test. The benches print timings and belong outside the test suite.
-3. **The daemon never decides.** Nothing in `tacho-daemon` calls `decide`, so `tacho tick` needs an outside caller. `batch_outcomes` is passed empty (`fleet.rs:~2582`). `tell`, `kill_burner` and `remove_worktree` still act outside `decide` (`fleet.rs:2271,2425`). Only decisions are logged, not their inputs, so a tick cannot be replayed; `tacho replay` re-runs a batch against the live tree instead. Log the inputs, make replay feed them back to `decide`, and have the daemon run it on each event.
-4. **Polling remains outside the watcher.** `thread::sleep` loops are in `tacho-system/src/lib.rs:309,345,359`, `server.rs:202,222,566`, `cgroup.rs:106`, `otlp_server.rs:87`, `appender.rs:211,383`, `sampler.rs:1057` and `cli/daemon.rs:36`. Move each onto `FdEventWatcher`, or say why it must sample.
-5. **`tell` to a live Claude still goes through the hook inbox.** Claude's `tell_program` is null, so a live session gets the message on its next hook turn. The live-resume path kills the process group and respawns, and it falls back to `resume_at` without saying so when the worktree or log is missing (`fleet.rs:~790-815`). Make the fallback an error, and define what a provider that cannot take a live message does.
-6. **Process kills trust a pid.** The tell and kill paths call `libc::kill(-pid)` on a pid that may have been reused. Check the pid still belongs to the agent (its cgroup or its start time) before signalling.
-7. **Smaller gaps:**
-   - Confirm a `flake` batch is never read as a pass by `queue` or `decide`. The flake path returns `Ok(())`.
-   - Checks are not modelled as area plus affected units.
-   - There is no presubmit or postsubmit mode.
+1. **The suite is redder than before.** With a clean environment, on a machine busy with other builds, `cargo test --workspace --no-fail-fast` gives 215 passed and 11 failed (ffe48a5 had 2): `prop_oracle_verification`, `prop_random_track_keys_oracle` (`recorder_prop.rs:506`), `test_on_stall_hook_timeout_kills_process_group_and_unblocks_second_hook`, both `tail` tests (partial line, truncation and rotation), `test_daemon_restart_lifecycle`, `test_fleet_tick_dispatch_reap_land_mismatch_and_tidy_rescue`, `test_kit_job_wait_and_kill`, `test_multi_agent_git_chaos`, `test_strict_start_base_db_plugin_live_tell_and_batch_head_moved` and `test_torture_daemon_chaos_and_recovery`. Failing under load is what time-based tests do. Make them wait on state, then run the suite five times beside a heavy build, and it must be green every time.
+2. **Time-based tests remain.** About 58 `thread::sleep` calls in 12 test files (18 in `test_torture.rs`), `wait_until` or deadlines in 14 files, and a timeout in `wait_for_api_sock` (`tacho-e2e/src/lib.rs:320-373`). No single test may wait on time; wait on the state and assert order or state. One overall cap per suite is fine.
+3. **The daemon still does not decide on its own.** It calls `decide` only on a "tick" or "decide" API command (`server.rs:491-542`), and that path logs an empty `main_sha` and no batch outcomes, which poisons replay. `tell_actions` is always empty (`decide/mod.rs:553`); `tell` (`fleet.rs:864`) and worktree removal (`fleet.rs:2886-2899`) act outside `decide`. Every tick feeds all finished batches back in, flakes included, and `decision_ticks` is never pruned.
+4. **Killing a process still trusts a pid.** `verify_agent_pid` (`fleet.rs:106`) is never given a recorded start time, returns true when `/proc/<pid>/stat` cannot be read, and accepts any process whose command line contains "claude", "tacho", "gemini" or "codex". Burner kills are unconditional after 600 s (`fleet.rs:2866`). Record each agent's pid with its start time or cgroup and refuse anything that does not match.
+5. **`tacho replay` regressed.** An id that is not a tick falls back to the latest tick (`fleet.rs:1836-1850`), so batch replay is unreachable and a numeric batch id is read as a tick id. Its `assert_eq!` panics instead of returning an error.
+6. **Errors are dropped.** `record_decision_tick` and the worktree removal in `tick` discard errors with `let _ =`. The train's scratch worktree is left behind when `Command::output()` fails (`fleet.rs:2063,2088`).
+7. **The tidy rescue runs `git stash`** and then force-removes the worktree. Worktrees share one stash, so this can lose or mix another agent's work. Commit to a rescue branch instead.
+8. **Smaller gaps:**
+   - A live Claude still gets `tell` through the hook inbox on its next turn.
+   - Timed `poll(…, 100)` loops remain in `server.rs` and `otlp_server.rs`, and sleeps in `sampler.rs:1060`, `appender.rs:389`, `system/lib.rs:311`, `client.rs:85` and `tail.rs:198`.
+   - Confirm the queue itself never reuses a `flake` batch as a pass.
+   - Checks are still not modelled as area plus affected units.
 
 ## Still changing in the live nzfleet
 
