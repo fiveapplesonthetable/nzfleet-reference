@@ -57,18 +57,34 @@ These came from incidents, and shunt should enforce them rather than trust each 
 - Credentials are read from files and never printed, echoed, or written to the log.
 - The owner merges. Agents open PRs and never merge or ask for write access.
 
-## Where shunt stands at 5a60d1e
+## Where shunt stands at 1f6288a
 
-This was checked on 23 October against the commit that added the fleet orchestrator. Roughly 5k lines of nzfleet's pure decisions are ported, and that part is good. The parts below are what still stand between it and replacing nzfleet, most important first.
+This was checked on 23 October.
 
-1. **The suite is still red on a fresh clone,** with about 17 failures. `every_kind_renders` cannot find `agent_state.state` (`oracle.rs:236`), and the e2e suites reject traces with "unexpected event type 5". The scrubber is still opt-in (`scrub.rs:214`); make it on by default.
-2. **Batch runs one command, not CI's jobs.** `fleet.rs:955` runs a single `--cmd`. It must read the workflow file, run each job in its image with its services, and refuse an env expression it has no value for. It must also refuse a result when main or a PR head moved during the run; today that check exists only at train and land time (`land.rs:279,299`). Add a compile of the merged tree before a train goes out.
-3. **`tell` restarts the agent.** `fleet.rs:641` appends to the brief and schedules a restart, which is the pattern this file says not to copy. Build a provider interface with start, alive, stop, cost and a live message, and move the provider names out of `fleet.rs` into config.
-4. **STALLED is still time-only.** `watch.rs:259` calls an agent stalled after 45 minutes with no log growth, commit or file change, even while its children are busy. Children already count for HUNG through the process-tree CPU (`sampler.rs:129`); make them count for STALLED too.
-5. **Worktrees and databases.** `kit.rs:187-199` falls back from a base SHA to `FETCH_HEAD`, `HEAD` and `origin/main`; refuse instead. There is no per-agent Postgres yet; make it a project plugin.
-6. **One replayable `decide`.** The logic is spread over `next_work`, `may_start` and `supervise_step`. Gather it into one function and test it against nzfleet's recorded cases.
-7. **Watchers.** Main and deploy watching, owner email, self-update and the machine's tidy pass have pure functions but no loop that runs them. Drive them from events, not `thread::sleep` (`fleet.rs:606`).
-8. **`docs/design.md:39` still lists agent control as a non-goal.** Rewrite it to match what the code now does.
+**Fixed since 5a60d1e:**
+- The scrubber is on by default (`scrub.rs:227-237`).
+- STALLED counts the process tree's CPU (`watch.rs:303`).
+- `tell` reaches a live session instead of restarting it (`fleet.rs:742-775`).
+- `start` refuses a base it cannot resolve to an exact commit (`kit.rs:178-260`).
+- A per-agent database plugin exists (`kit.rs:353`).
+- `decide` exists (`decide/mod.rs:144`).
+- `design.md` is rewritten.
+- The oracle and e2e trace tests pass.
+
+None of the new code repeats a "do not copy" item. What remains, most important first:
+
+1. **The suite is still red.** `cargo test --workspace --no-fail-fast` gives 226 passed and 7 failed: `recorder_prop::prop_deterministic_restore`, both `bench_throughput` tests, `test_random_write_point_sigkill_crash`, `test_watch_until_stalled_and_report` (`test6_watch_and_report.rs:61`, a 5 s deadline), and both `hook_bench` tests (`hook_bench.rs:130,286`, a 200 ms bound). Several are timing tests, which the rules forbid; make them assert order or state instead. Without a raised file limit, `inotify_init1` fails with "Too many open files". The suite must be green with nothing set.
+2. **`batch` cannot read a real workflow.** `fleet.rs:1065` parses it with `serde_json`, so a YAML workflow never loads. Every parse error and `job_for` error is skipped silently (`fleet.rs:1074`), and the run falls back to `cargo test --workspace` (`fleet.rs:1108`). The refusal of unknown expressions in `verify.rs:1659` therefore never reaches anyone. Parse YAML, fail the batch on any parse or expression error, and drop the default command.
+3. **A moved main is not caught.** `fleet.rs:1169-1210` re-reads PR heads from the cached PR list rather than the remote, and never re-reads main after the run. The merged-tree compile before a train (`fleet.rs:1574-1595`) runs only if a compile command is configured, and passes silently otherwise. Re-read main and the heads from the remote, and make the compile mandatory.
+4. **`decide` is not wired in.** It has no caller outside its tests. `execute_tick` (`fleet.rs:2048`) still calls `next_work`, `may_start` and the supervise steps directly. `tick` should call `decide`, and nothing else should decide.
+5. **No watcher runs on its own.** `decide_tidy` runs only from a command (`fleet.rs:1945`). `decide_owner_notifications` runs inside `tick` with empty deploy and fix inputs, and `decide_self_update` has no caller. Nothing watches main or the deploy. `thread::sleep` remains in `kit.rs:782,852,864,1202` and `daemon.rs:214,234`. Drive these from events.
+6. **`tell` works only through the hook.** The message is a file (`inbox/<key>.txt`) that the hook reads on the agent's next turn (`hook.rs:63`). An idle session, or a provider with no `tell_args`, gets nothing until it acts. Define what happens for a provider that cannot take a live message, and move the built-in provider list into config.
+7. **Smaller gaps:**
+   - Checks are not modelled as area plus affected units.
+   - A batch has no cap that reports a hang with the job's last output.
+   - There is no presubmit or postsubmit mode.
+   - A retried test that passes (`fleet.rs:1163`) must be recorded as a flake, not a pass.
+   - `verify.rs:1650` has an `unwrap()`.
 
 ## Still changing in the live nzfleet
 
