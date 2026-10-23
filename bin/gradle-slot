@@ -1,0 +1,14 @@
+#!/bin/bash
+# gradle-slot <command...>: run under one of three Android build slots, waiting for a free one.
+# Three concurrent Gradle builds fit in memory; the old single lock queued them for an hour.
+# The last slot is a batch's alone, so a train's android area never queues behind agents.
+slots="1 2 3"
+[ -n "$NZFLEET_BATCH" ] || slots="1 2"
+while true; do
+  for i in $slots; do
+    exec 9>"${NZPM_GRADLE_LOCKS:-/tmp}/nzpm-gradle.slot$i"
+    if flock -n 9; then exec "$@"; fi
+    exec 9>&-
+  done
+  sleep 5
+done

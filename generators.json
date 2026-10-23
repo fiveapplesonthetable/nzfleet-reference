@@ -1,0 +1,3 @@
+{
+  "frontend/admin/docs/comparison.html": "cd frontend/admin && npm ci --no-audit --no-fund >/dev/null && npm run --silent comparison"
+}

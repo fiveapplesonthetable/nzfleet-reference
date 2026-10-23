@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+import os
+import sys
+
+os.environ["NZFLEET_LIVE"] = "1"  # only this entry point and the service unit may start agents
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+
+from nzfleet.cli import main  # noqa: E402
+
+sys.exit(main(sys.argv[1:]))

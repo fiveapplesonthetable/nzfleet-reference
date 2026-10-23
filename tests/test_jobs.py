@@ -1,0 +1,524 @@
+import os
+import re
+import shlex
+import signal
+import subprocess
+import tempfile
+import unittest
+
+import yaml
+
+from nzfleet import plan
+
+CI = os.path.join(os.path.dirname(__file__), "..", "..", "..", ".github", "workflows", "ci.yaml")
+WORKFLOW = yaml.safe_load(open(CI))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+EXPRESSIONS = {"NZELA_BASE": "abc123", "CHANGED_TESTS_BASE": "", "CEILING_BASE": "abc123"}
+
+NODE = "node:22-trixie"
+RUST = "rust:1.98-trixie"
+PLAYWRIGHT = "mcr.microsoft.com/playwright"
+
+
+def job(area):
+    return plan.job_for(WORKFLOW, area, EXPRESSIONS)
+
+
+def checks_run(job):
+    """The areas the job's last step hands to checks.sh, run with the environment the batch gives it."""
+    script = job.steps[-1].replace("scripts/checks.sh", "echo")
+    env = {"PATH": os.environ["PATH"], **job.step_envs[-1]}
+    return subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, check=True).stdout.strip()
+
+
+class WhereCiRunsEachArea(unittest.TestCase):
+    def test_console_jobs_share_one_build_and_the_crawl_runs_after_merge(self):
+        jobs = WORKFLOW["jobs"]
+        self.assertNotIn("console-crawl", jobs)
+        self.assertEqual(jobs["console-browser"]["needs"], ["select", "console"])
+        self.assertNotIn("console-capture", jobs)
+        self.assertEqual(
+            [step.get("with", {}).get("name") for step in jobs["console"]["steps"] if "upload-artifact" in step.get("uses", "")],
+            ["console-dist"],
+        )
+        self.assertIn("console-dist", [step.get("with", {}).get("name") for step in jobs["console-browser"]["steps"]])
+        with open(os.path.join(ROOT, ".github", "workflows", "console-crawl.yaml")) as source:
+            postmerge = yaml.safe_load(source)
+        self.assertEqual(postmerge["jobs"]["crawl"]["strategy"]["matrix"]["shard"], [1, 2, 3, 4])
+        self.assertEqual(postmerge[True]["workflow_run"]["workflows"], ["CI checks"])
+        self.assertEqual(postmerge[True]["workflow_run"]["branches"], ["main"])
+        with open(os.path.join(ROOT, ".github", "workflows", "console-capture.yaml")) as source:
+            capture = yaml.safe_load(source)
+        self.assertEqual(capture[True]["workflow_run"]["workflows"], ["CI checks"])
+        self.assertEqual(capture[True]["workflow_run"]["branches"], ["main"])
+        self.assertNotIn("workflow_dispatch", capture[True])
+
+    def test_fleet_checks_run_separately_from_deploy(self):
+        self.assertEqual(job("fleet").steps[-1], "scripts/checks.sh fleet")
+        with open(os.path.join(ROOT, "scripts", "areas", "deploy.sh")) as source:
+            deploy = source.read().split("check_fleet()", 1)[0]
+        self.assertNotIn("unittest discover -q tests", deploy)
+
+    def test_rust_checks_run_the_tests_with_a_pinned_nextest_binary(self):
+        check_steps = [step.get("run", "") for step in WORKFLOW["jobs"]["check"]["steps"]]
+        self.assertFalse(any("cargo install cargo-nextest" in step for step in check_steps))
+        self.assertTrue(any("scripts/install-nextest.sh" in step for step in check_steps))
+        self.assertNotIn("rust_tests", WORKFLOW["jobs"])
+        self.assertFalse(any(step.get("uses", "").startswith("actions/upload-artifact") for step in WORKFLOW["jobs"]["check"]["steps"]))
+
+    def test_every_area_ci_runs_in_an_image_is_run_in_that_image(self):
+        expected = {"rust": RUST, "compat": RUST, "fuzz": RUST, "e2e": RUST, "secrets": NODE, "site": NODE,
+                    "deploy": NODE, "fleet": NODE, "console": PLAYWRIGHT}
+        for area, image in expected.items():
+            self.assertTrue(job(area).image.startswith(image), area)
+
+    def test_the_images_are_the_ones_ci_pins_by_digest(self):
+        for area in ("rust", "deploy", "console", "fleet"):
+            self.assertIn("@sha256:", job(area).image)
+
+    def test_the_areas_ci_runs_on_the_host_have_no_image(self):
+        for area in ("android", "image", "formal"):
+            self.assertEqual(job(area).image, "", area)
+
+    def test_an_area_with_no_job_in_ci_runs_on_the_host(self):
+        self.assertEqual(job("coverage"), plan.Job("coverage"))
+
+    def test_docker_is_only_where_ci_has_it(self):
+        for area in ("rust", "compat", "fuzz", "e2e", "secrets", "site", "deploy", "fleet", "console"):
+            argv = plan.job_argv(job(area), "n", "net", {}, "/w", "1:1", {})
+            self.assertNotIn("/var/run/docker.sock", " ".join(argv), area)
+
+    def test_console_batch_runs_the_combined_area_in_the_browser_image(self):
+        console = job("console")
+        self.assertEqual(console.cpus, 12)
+        self.assertIn("npm ci --prefer-offline", console.steps)
+        self.assertEqual(console.steps[-1], "../../scripts/checks.sh console")
+
+
+class WhatCiSetsUp(unittest.TestCase):
+    def test_the_rust_areas_get_their_own_postgres_by_the_name_ci_gives_it(self):
+        for area in ("rust", "compat", "fuzz", "e2e"):
+            self.assertEqual(job(area).service["name"], "postgres", area)
+            self.assertEqual(job(area).env["DATABASE_URL"], "postgres://nzela:nzela@postgres:5432/nzela", area)
+
+    def test_rust_area_postgres_argv_has_the_bounded_connection_budget(self):
+        for area in ("rust", "compat", "fuzz", "e2e"):
+            argv = plan.service_argv(job(area), "svc", "net")
+            self.assertIn(("-c", "max_connections=300"), list(zip(argv, argv[1:])), area)
+
+    def test_compose_test_postgres_command_has_the_bounded_connection_budget(self):
+        with open(os.path.join(ROOT, "deploy", "compose.test.yaml")) as source:
+            compose = yaml.safe_load(source)
+        command = shlex.split(compose["services"]["postgres"]["command"])
+        self.assertIn(("-c", "max_connections=300"), list(zip(command, command[1:])))
+
+    def test_pre_push_postgres_command_has_the_bounded_connection_budget(self):
+        with open(os.path.join(ROOT, "scripts", "pre-push-db.sh")) as source:
+            script = source.read()
+        command = re.search(r"(?ms)^docker run -d .*?^\s+postgres:16 (.*?) >/dev/null$", script)
+        self.assertIsNotNone(command)
+        argv = shlex.split(command.group(1).replace("\\\n", " "))
+        self.assertIn(("-c", "max_connections=300"), list(zip(argv, argv[1:])))
+
+    def test_fuzz_compiles_in_the_rust_jobs_environment_and_runs_its_own_check(self):
+        self.assertEqual(checks_run(job("fuzz")), "fuzz")
+        self.assertEqual(job("fuzz").image, job("rust").image)
+
+    def test_rust_runs_only_its_own_check_in_the_job_it_shares_with_fuzz(self):
+        self.assertEqual(checks_run(job("rust")), "rust")
+
+    def test_areas_without_a_service_start_none(self):
+        for area in ("secrets", "site", "deploy", "console"):
+            self.assertIsNone(job(area).service, area)
+
+    def test_the_steps_ci_runs_before_the_checks_run_before_them(self):
+        steps = job("deploy").steps
+        self.assertIn("apt-get install", steps[0])
+        self.assertEqual(steps[-1], "scripts/checks.sh deploy")
+
+    def test_deploy_runs_without_console_dependencies(self):
+        argv = plan.job_argv(job("deploy"), "n", "net", {}, "/w", "1:1", {})
+        commands = argv[argv.index("nzfleet") + 1:]
+        self.assertEqual(commands[-1], "scripts/checks.sh deploy")
+        self.assertFalse(any("npm ci" in command for command in commands))
+
+    def test_the_migrations_are_applied_by_the_step_ci_applies_them_in(self):
+        self.assertTrue(any("psql" in s for s in job("rust").steps))
+
+    def test_the_console_runs_where_ci_runs_it(self):
+        self.assertEqual(job("console").workdir, "frontend/admin")
+        self.assertEqual(job("console").steps[-1], "../../scripts/checks.sh console")
+
+    def test_contract_finds_the_generator_without_an_action_path_file(self):
+        self.assertEqual(job("contract").steps[-1],
+                         'flock /warm/typeshare.lock sh -c \'PATH="/warm/typeshare/bin:$PATH" scripts/checks.sh contract\'')
+
+    def test_an_expression_in_ci_takes_the_value_the_batch_gives_it(self):
+        self.assertEqual(job("compat").env["NZELA_BASE"], "abc123")
+
+    def test_an_expression_with_no_value_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "NZELA_BASE"):
+            plan.job_for(WORKFLOW, "compat", {})
+
+    def test_every_action_ci_uses_in_an_image_has_a_stand_in(self):
+        for area in ("rust", "compat", "fuzz", "e2e", "secrets", "site", "deploy", "console"):
+            job(area)
+
+    def test_an_action_without_a_stand_in_is_refused(self):
+        workflow = {"jobs": {"site": {"container": {"image": "x", "options": "${{ vars.CI_RUNS_ON && '--cpus=1' || '' }}"}, "steps": [{"uses": "acme/setup@v1"}]}}}
+        with self.assertRaisesRegex(ValueError, "acme/setup"):
+            plan.job_for(workflow, "site", {})
+
+    def test_a_conditional_step_is_refused(self):
+        workflow = {"jobs": {"site": {"container": {"image": "x", "options": "${{ vars.CI_RUNS_ON && '--cpus=1' || '' }}"}, "steps": [{"run": "true", "if": "always()"}]}}}
+        with self.assertRaisesRegex(ValueError, "if"):
+            plan.job_for(workflow, "site", {})
+
+    def test_a_step_working_directory_runs_only_that_step_there(self):
+        with tempfile.TemporaryDirectory() as temp:
+            worktree = os.path.join(temp, "workspace")
+            target = "admin space;$(false)'literal"
+            os.makedirs(os.path.join(worktree, target))
+            with open(os.path.join(worktree, target, "marker"), "w") as marker:
+                marker.write("ready")
+            workflow = {"jobs": {"site": {"container": {"image": "x", "options": "${{ vars.CI_RUNS_ON && '--cpus=1' || '' }}"}, "steps": [
+                {"run": "test -f marker && printf 'FLEET_DIRECTORY=ready\\n' >> \"$GITHUB_ENV\"",
+                 "working-directory": target},
+                {"run": "test ! -e marker && test \"$PWD\" = \"$WORKSPACE\" && "
+                        "test \"$FLEET_DIRECTORY\" = ready"},
+            ]}}}
+            argv = plan.job_argv(plan.job_for(workflow, "site", {}), "n", "net", {}, worktree,
+                                 f"{os.getuid()}:{os.getgid()}", {})
+            driver = argv[argv.index("-c") + 1]
+            result = subprocess.run(["bash", "-c", driver, "nzfleet", *argv[argv.index("nzfleet") + 1:]],
+                                    cwd=worktree, env={**os.environ, "WORKSPACE": worktree}, check=False)
+            self.assertEqual(result.returncode, 0)
+
+    def test_a_step_directory_overrides_the_job_default_from_workspace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            worktree = os.path.join(temp, "workspace")
+            os.makedirs(os.path.join(worktree, "job"))
+            os.makedirs(os.path.join(worktree, "other"))
+            workflow = {"jobs": {"site": {"container": {"image": "x", "options": "${{ vars.CI_RUNS_ON && '--cpus=1' || '' }}"},
+                "defaults": {"run": {"working-directory": "job"}}, "steps": [
+                    {"run": "test \"$PWD\" = \"$JOB_CWD\""},
+                    {"run": "test \"$PWD\" = \"$STEP_CWD\"", "working-directory": "other"},
+                    {"run": "test \"$PWD\" = \"$JOB_CWD\""},
+                ]}}}
+            argv = plan.job_argv(plan.job_for(workflow, "site", {}), "n", "net", {}, worktree,
+                                 f"{os.getuid()}:{os.getgid()}", {})
+            driver = argv[argv.index("-c") + 1]
+            result = subprocess.run(["bash", "-c", driver, "nzfleet", *argv[argv.index("nzfleet") + 1:]],
+                                    cwd=os.path.join(worktree, "job"), env={**os.environ,
+                                    "JOB_CWD": os.path.join(worktree, "job"),
+                                    "STEP_CWD": os.path.join(worktree, "other")}, check=False)
+            self.assertEqual(result.returncode, 0)
+
+    def test_a_step_directory_expression_is_refused(self):
+        workflow = {"jobs": {"site": {"container": {"image": "x", "options": "${{ vars.CI_RUNS_ON && '--cpus=1' || '' }}"}, "steps": [
+            {"run": "true", "working-directory": "${{ matrix.path }}"}]}}}
+        with self.assertRaisesRegex(ValueError, "working-directory"):
+            plan.job_for(workflow, "site", {})
+
+
+class TheCommands(unittest.TestCase):
+    def test_batch_checkout_has_the_merged_head_and_only_origin(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = os.path.join(temp, "source")
+            destination = os.path.join(temp, "checkout")
+            os.makedirs(source)
+            subprocess.run(["git", "init", "-q", source], check=True)
+            for contents in ("main", "merged"):
+                if contents == "merged":
+                    subprocess.run(["git", "-C", source, "checkout", "-q", "--detach", "HEAD"], check=True)
+                with open(os.path.join(source, "state"), "w") as file:
+                    file.write(contents)
+                subprocess.run(["git", "-C", source, "add", "state"], check=True)
+                subprocess.run(["git", "-C", source, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                                "commit", "-qm", contents], check=True)
+            script = os.path.join(ROOT, "tools", "nzfleet", "bin", "shallow-checkout.sh")
+            result = subprocess.run(["bash", script, source, destination, "https://github.com/nzela-org/nzela.git"],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with open(os.path.join(destination, "state")) as file:
+                self.assertEqual(file.read(), "merged")
+            self.assertEqual(subprocess.check_output(["git", "-C", destination, "rev-list", "--count", "HEAD"],
+                                                     text=True).strip(), "1")
+            self.assertEqual(subprocess.check_output(["git", "-C", destination, "remote"], text=True).split(), ["origin"])
+            self.assertNotEqual(subprocess.run(["git", "-C", destination, "rev-parse", "upstream/main"],
+                                               capture_output=True).returncode, 0)
+
+    def test_runner_files_apply_path_and_environment_between_steps(self):
+        workflow = {"jobs": {"site": {"container": {"image": "x", "options": "${{ vars.CI_RUNS_ON && '--cpus=1' || '' }}"},
+            "steps": [{"run": "printf '%s\\n' 'PATH=/x' >> \"$GITHUB_PATH\"; "
+                              "printf '%s\\n' 'FLEET_VALUE=ready' 'MULTI<<EOF' 'first' 'second' 'EOF' >> \"$GITHUB_ENV\""},
+                      {"run": "test \"$GITHUB_ACTIONS\" = true && test \"$CI\" = true && "
+                              "test \"$GITHUB_REF\" = refs/heads/main && test \"$FLEET_VALUE\" = ready && "
+                              "test \"${PATH%%:*}\" = 'PATH=/x' && "
+                              "test \"$MULTI\" = \"$(printf 'first\\nsecond')\" && "
+                              "test -f \"$GITHUB_OUTPUT\" && test -f \"$GITHUB_STEP_SUMMARY\""}]}}}
+        with tempfile.TemporaryDirectory() as root:
+            argv = plan.job_argv(plan.job_for(workflow, "site", {}), "n", "net", {}, root,
+                                 f"{os.getuid()}:{os.getgid()}", {})
+            environment = dict(item.split("=", 1) for flag, item in zip(argv, argv[1:]) if flag == "-e")
+            result = subprocess.run(["bash", "-c", argv[argv.index("-c") + 1], "nzfleet",
+                                     *argv[argv.index("nzfleet") + 1:]], cwd=root,
+                                    env={**os.environ, **environment}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_native_container_caps_match_ci_for_every_bounded_job(self):
+        expected = {"rust": (7, 4), "compat": (3, 1), "e2e": (3, 1), "console": (12, 0), "fleet": (1, 0),
+                    "contract": (1, 0), "secrets": (1, 0), "site": (1, 0), "deploy": (1, 0)}
+        for area, caps in expected.items():
+            with self.subTest(area=area):
+                self.assertEqual((job(area).cpus, job(area).service_cpus), caps)
+        self.assertNotIn("NZELA_CONSOLE_WORKERS", job("console").env)
+
+    def test_unsupported_cpu_expression_is_refused(self):
+        workflow = {"jobs": {"site": {"container": {"image": "x", "options": "${{ vars.OTHER && '--cpus=6' || '' }}"}}}}
+        with self.assertRaisesRegex(ValueError, "CPU options"):
+            plan.job_for(workflow, "site", {})
+
+    def test_android_native_view_and_workers_are_six(self):
+        self.assertEqual(job("android").env,
+                         {"JAVA_TOOL_OPTIONS": "-XX:ActiveProcessorCount=6", "GRADLE_OPTS": "-Dorg.gradle.workers.max=6"})
+
+    def test_android_job_without_either_resource_cap_is_refused(self):
+        for missing in ("JAVA_TOOL_OPTIONS", "GRADLE_OPTS"):
+            with self.subTest(missing=missing):
+                workflow = {"jobs": {"android": {"env": {
+                    key: value for key, value in WORKFLOW["jobs"]["android"]["env"].items() if key != missing
+                }}}}
+                with self.assertRaisesRegex(ValueError, "missing processor or Gradle worker cap"):
+                    plan.job_for(workflow, "android", {})
+
+    def test_a_job_container_reaps_its_children(self):
+        self.assertIn("--init", plan.job_argv(job("rust"), "n", "net", {}, "/w", "1:1", {}))
+
+    def test_the_service_starts_on_the_jobs_network_with_ci_options(self):
+        expected = ["docker", "run", "-d", "--init", "--name", "svc", "--network", "net", "--network-alias", "postgres",
+                    "-e", "POSTGRES_USER=nzela", "-e", "POSTGRES_PASSWORD=nzela", "-e", "POSTGRES_DB=nzela",
+                    "--health-cmd", "pg_isready -U nzela", "--health-interval", "2s", "--health-timeout", "2s",
+                    "--health-retries", "3600", "--tmpfs", "/var/lib/postgresql/data:rw", "postgres:16-alpine",
+                    "postgres", "-c", "fsync=off", "-c", "full_page_writes=off", "-c", "synchronous_commit=off",
+                    "-c", "max_connections=300"]
+        for area in ("rust", "compat", "e2e"):
+            service = expected.copy()
+            if area == "rust":
+                data = service.index("/var/lib/postgresql/data:rw")
+                service[data:data + 1] = ["/var/lib/postgresql/data:rw,size=4g", "--memory=8g"]
+            self.assertEqual(plan.service_argv(job(area), "svc", "net"), service, area)
+
+    def test_warm_jobs_keep_only_supported_mount_and_step_environment(self):
+        for area in ("rust", "compat", "e2e", "contract"):
+            current = job(area)
+            self.assertTrue(current.warm_volume, area)
+            self.assertEqual(current.step_envs[0], {"CI_WARM_OVERRIDE": "native-cache", "CI_SELF_HOSTED": "native"})
+            argv = plan.job_argv(current, "n", "net", {"/owned/warm": "/warm"}, "/w", "1000:1000", {})
+            self.assertEqual(argv.count("/owned/warm:/warm"), 1)
+            self.assertIn("/warm", argv[argv.index("-c") + 1])
+            self.assertIn("export CI_WARM_OVERRIDE=native-cache\nexport CI_SELF_HOSTED=native\npython3 scripts/ci-warm-cache.py mounted", argv)
+            self.assertNotIn("${{", " ".join(argv))
+
+    def test_a_batch_runs_the_whole_rust_or_fuzz_area_not_one_lane_of_it(self):
+        for area in ("rust", "fuzz"):
+            current = job(area)
+            self.assertEqual(current.steps[-1], f"scripts/checks.sh {area}")
+            self.assertEqual(current.step_envs[-1], {})
+
+    def test_unknown_warm_volume_or_step_expression_is_refused(self):
+        import copy
+        workflow = copy.deepcopy(WORKFLOW)
+        workflow["jobs"]["check"]["container"]["volumes"] = ["${{ vars.OTHER }}:/warm"]
+        with self.assertRaisesRegex(ValueError, "container volumes"):
+            plan.job_for(workflow, "rust", EXPRESSIONS)
+        workflow = copy.deepcopy(WORKFLOW)
+        next(s for s in workflow["jobs"]["check"]["steps"] if s.get("name") == "Verify warm cache mount")["env"]["CI_SELF_HOSTED"] = "${{ vars.OTHER }}"
+        with self.assertRaisesRegex(ValueError, "step environment"):
+            plan.job_for(workflow, "rust", EXPRESSIONS)
+
+    def test_the_job_runs_its_steps_in_order_as_root_in_its_working_directory(self):
+        argv = plan.job_argv(job("console"), "n", "net", {}, "/w/x", "1000:1000", {})
+        self.assertEqual(argv[argv.index("-w") + 1], "/w/x/frontend/admin")
+        self.assertEqual(argv[argv.index("--user") + 1], "root")
+        self.assertEqual(argv[argv.index("nzfleet") + 1:], list(job("console").steps))
+
+    def test_the_worktree_is_mounted_where_it_is_on_the_host_and_the_repository_read_only(self):
+        argv = plan.job_argv(job("rust"), "n", "net", {"/r/.git": "/r/.git:ro"}, "/w/x", "1:1", {})
+        self.assertIn("/w/x:/w/x", argv)
+        self.assertIn("/r/.git:/r/.git:ro", argv)
+
+    def test_what_the_job_wrote_is_handed_back_but_the_read_only_repository_is_not_touched(self):
+        argv = plan.job_argv(job("rust"), "n", "net", {"/t": "/target", "/r/.git": "/r/.git:ro"}, "/w/x", "7:8", {})
+        driver = argv[argv.index("-c") + 1]
+        self.assertIn("chown -R 7:8 /w/x /target/rust ", driver)
+        self.assertNotIn("/target ", driver)
+        self.assertNotIn("/r/.git", driver)
+
+    def test_a_read_only_target_is_excluded_from_ownership_handoff(self):
+        with tempfile.TemporaryDirectory() as temp:
+            worktree = os.path.join(temp, "worktree")
+            handback = os.path.join(temp, "handback")
+            executable = os.path.join(temp, "chown")
+            os.makedirs(worktree)
+            with open(executable, "w") as fake_chown:
+                fake_chown.write("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HANDBACK\"\n")
+            os.chmod(executable, 0o755)
+            env = {**os.environ, "PATH": temp + os.pathsep + os.environ["PATH"], "HANDBACK": handback}
+            argv = plan.job_argv(job("rust"), "n", "net", {"/target": "/target:ro"}, worktree, "7:8", {})
+            driver = argv[argv.index("-c") + 1]
+            result = subprocess.run(["bash", "-c", driver, "nzfleet", "true"], env=env, check=False)
+            self.assertEqual(result.returncode, 0)
+            with open(handback) as recorded:
+                self.assertEqual(recorded.read(), f"-R 7:8 {worktree}\n")
+
+    def test_a_fuzz_job_hands_back_only_its_target_while_a_sibling_compiler_removes_a_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            worktree = os.path.join(temp, "worktree")
+            target = os.path.join(temp, "target")
+            sibling_file = os.path.join(target, "rust", "debug", "deps", "compiler.tmp")
+            own_file = os.path.join(target, "fuzz", "debug", "deps", "fuzzer")
+            os.makedirs(os.path.dirname(sibling_file))
+            os.makedirs(os.path.dirname(own_file))
+            os.makedirs(worktree)
+            with open(sibling_file, "w") as file:
+                file.write("compiler output")
+            with open(own_file, "w") as file:
+                file.write("fuzzer output")
+            handback = os.path.join(temp, "handback")
+            executable = os.path.join(temp, "chown")
+            with open(executable, "w") as fake_chown:
+                fake_chown.write(
+                    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HANDBACK\"\n"
+                    "shift 2\nfor path do find \"$path\" -type f -print; done >> \"$HANDBACK\"\n"
+                )
+            os.chmod(executable, 0o755)
+            env = {**os.environ, "PATH": temp + os.pathsep + os.environ["PATH"], "HANDBACK": handback}
+            argv = plan.job_argv(job("fuzz"), "n", "net", {target: "/target", "/repo/.git": "/repo/.git:ro"}, worktree, "7:8", {})
+            driver = argv[argv.index("-c") + 1].replace("/target", target)
+            command = f"rm {shlex.quote(sibling_file)}"
+            result = subprocess.run(["bash", "-c", driver, "nzfleet", command], env=env, check=False)
+            self.assertEqual(result.returncode, 0)
+            with open(handback) as recorded:
+                handed_back = recorded.read()
+            self.assertIn(f"-R 7:8 {worktree} {target}/fuzz", handed_back)
+            self.assertIn(own_file, handed_back)
+            self.assertNotIn(f" {target}\n", handed_back)
+            self.assertNotIn(sibling_file, handed_back)
+            self.assertNotIn("/repo/.git", handed_back)
+
+    def test_a_container_return_traps_failures_and_termination_for_ownership_handoff(self):
+        argv = plan.job_argv(job("console"), "n", "net", {}, "/w/x", "7:8", {})
+        driver = argv[argv.index("-c") + 1]
+        self.assertIn("trap finish EXIT", driver)
+        self.assertIn("trap 'interrupt 143' TERM", driver)
+        self.assertIn("trap 'interrupt 130' INT", driver)
+
+    def test_failed_or_interrupted_checks_preserve_their_status_when_handing_back(self):
+        driver = plan.job_argv(job("console"), "n", "net", {}, "/w/x", "7:8", {})
+        script = driver[driver.index("-c") + 1]
+        for command, status in (("false", 1), ("kill -TERM $PPID", 143), ("kill -INT $PPID", 130)):
+            with tempfile.TemporaryDirectory() as temp:
+                handoff = os.path.join(temp, "handoff")
+                executable = os.path.join(temp, "chown")
+                with open(executable, "w") as fake_chown:
+                    fake_chown.write("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HANDOFF\"\n")
+                os.chmod(executable, 0o755)
+                env = {**os.environ, "PATH": temp + os.pathsep + os.environ["PATH"], "HANDOFF": handoff}
+                result = subprocess.run(["bash", "-c", script, "nzfleet", command], env=env, check=False)
+                self.assertEqual(result.returncode, status, command)
+                with open(handoff) as recorded:
+                    self.assertEqual(recorded.read(), "-R 7:8 /w/x\n", command)
+
+    def test_handoff_failure_fails_success_but_preserves_a_failed_check(self):
+        driver = plan.job_argv(job("console"), "n", "net", {}, "/w/x", "7:8", {})
+        script = driver[driver.index("-c") + 1]
+        with tempfile.TemporaryDirectory() as temp:
+            handoff = os.path.join(temp, "handoff")
+            executable = os.path.join(temp, "chown")
+            with open(executable, "w") as fake_chown:
+                fake_chown.write("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HANDOFF\"; exit 9\n")
+            os.chmod(executable, 0o755)
+            env = {**os.environ, "PATH": temp + os.pathsep + os.environ["PATH"], "HANDOFF": handoff}
+            for command, status in (("true", 9), ("false", 1)):
+                result = subprocess.run(["bash", "-c", script, "nzfleet", command], env=env, check=False)
+                self.assertEqual(result.returncode, status, command)
+
+    def test_term_and_int_stop_a_child_and_grandchild_before_handoff(self):
+        driver = plan.job_argv(job("console"), "n", "net", {}, "/w/x", "7:8", {})
+        script = driver[driver.index("-c") + 1]
+        for sig, status in ((signal.SIGTERM, 143), (signal.SIGINT, 130)):
+            with self.subTest(signal=sig), tempfile.TemporaryDirectory() as temp:
+                child_pipe = os.path.join(temp, "child")
+                grandchild_pipe = os.path.join(temp, "grandchild")
+                block_pipe = os.path.join(temp, "block")
+                handoff = os.path.join(temp, "handoff")
+                os.mkfifo(child_pipe)
+                os.mkfifo(grandchild_pipe)
+                os.mkfifo(block_pipe)
+                executable = os.path.join(temp, "chown")
+                with open(executable, "w") as fake_chown:
+                    fake_chown.write("#!/bin/sh\nprintf '%s\\n' done >> \"$HANDOFF\"\n")
+                os.chmod(executable, 0o755)
+                env = {**os.environ, "PATH": temp + os.pathsep + os.environ["PATH"], "HANDOFF": handoff,
+                       "CHILD_PIPE": child_pipe, "GRANDCHILD_PIPE": grandchild_pipe, "BLOCK_PIPE": block_pipe}
+                descriptors = [os.open(path, os.O_RDONLY | os.O_NONBLOCK) for path in (grandchild_pipe, child_pipe)]
+                blocker = os.open(block_pipe, os.O_RDWR | os.O_NONBLOCK)
+                command = '(exec 8>"$GRANDCHILD_PIPE"; printf x >&8; exec cat <"$BLOCK_PIPE") & '
+                command += 'exec 9>"$CHILD_PIPE"; printf x >&9; exec cat <"$BLOCK_PIPE"'
+                child = subprocess.Popen(["bash", "-c", script, "nzfleet", command], env=env)
+                try:
+                    import select
+                    for fd in descriptors:
+                        self.assertTrue(select.select([fd], [], [], 3)[0], "descendant did not reach its pipe")
+                        self.assertEqual(os.read(fd, 1), b"x")
+                    child.send_signal(sig)
+                    self.assertEqual(child.wait(timeout=3), status)
+                    for fd in descriptors:
+                        self.assertTrue(select.select([fd], [], [], 3)[0], "descendant still holds its pipe")
+                        self.assertEqual(os.read(fd, 1), b"")
+                    with open(handoff) as recorded:
+                        self.assertEqual(recorded.read(), "done\n")
+                finally:
+                    for fd in descriptors:
+                        os.close(fd)
+                    os.close(blocker)
+                    if child.poll() is None:
+                        child.kill()
+                        child.wait()
+
+    def test_the_batch_can_add_to_the_environment_but_not_change_ci_s(self):
+        argv = plan.job_argv(job("rust"), "n", "net", {}, "/w", "1:1", {"CARGO_INCREMENTAL": "0"})
+        self.assertIn("CARGO_INCREMENTAL=0", argv)
+        self.assertIn("NZELA_CARGO=cargo", argv)
+
+
+class TheSummary(unittest.TestCase):
+    def test_a_failed_run_names_the_failed_areas_in_the_form_the_batch_reads_back(self):
+        line = plan.summary(["deploy", "rust"], ["deploy"])
+        self.assertEqual(line, "failed: deploy")
+        self.assertEqual(plan.failed_areas(line, ["deploy", "rust"]), ["deploy"])
+
+    def test_a_clean_run_names_every_area(self):
+        self.assertEqual(plan.summary(["deploy", "rust"], []), "passed: deploy rust")
+
+
+class TheSummaryLine(unittest.TestCase):
+    AREAS = ["rust", "console", "deploy"]
+
+    def test_a_test_that_prints_failed_does_not_become_the_summary(self):
+        log = "failed: restore drill\n\x1b[1;31mfailed: rust\x1b[0m\nfailed: restore-drill-test\n"
+        self.assertEqual(plan.summary_line(log, self.AREAS), "failed: rust")
+
+    def test_the_last_summary_wins_over_an_earlier_one(self):
+        self.assertEqual(plan.summary_line("passed: rust\nfailed: console\n", self.AREAS), "failed: console")
+
+    def test_a_log_with_no_summary_gives_an_empty_line(self):
+        self.assertEqual(plan.summary_line("failed: restore drill\n", self.AREAS), "")
+
+    def test_an_indented_line_is_not_the_summary(self):
+        self.assertEqual(plan.summary_line("  failed: rust\n", self.AREAS), "")
+
+    def test_an_unreadable_summary_leaves_every_area_red(self):
+        self.assertEqual(plan.failed_areas(plan.summary_line("failed: restore drill\n", self.AREAS), ["rust", "deploy"]),
+                         ["rust", "deploy"])

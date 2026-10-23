@@ -1,0 +1,16 @@
+[Unit]
+Description=nzfleet: nzela PRs from draft to deployed
+After=network-online.target docker.service
+
+[Service]
+# Every machine-specific value, including NZFLEET_CODE (a detached worktree's tools/nzfleet), lives here.
+Environment=NZFLEET_LIVE=1
+EnvironmentFile=%h/.config/nzfleet/env
+ExecStart=/bin/sh -c 'cd "$NZFLEET_CODE" && exec python3 -m nzfleet daemon'
+Restart=always
+# Batches and agents are its children; a restart must not kill them.
+KillMode=process
+RestartSec=30
+
+[Install]
+WantedBy=default.target

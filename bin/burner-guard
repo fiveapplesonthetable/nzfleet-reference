@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+# PreToolUse hook for Bash: refuses a CPU burner outside `nzfleet starve`.
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+
+from nzfleet import guard  # noqa: E402
+
+said = guard.refusal((json.load(sys.stdin).get("tool_input") or {}).get("command") or "")
+if said:
+    print(said, file=sys.stderr)
+    sys.exit(2)

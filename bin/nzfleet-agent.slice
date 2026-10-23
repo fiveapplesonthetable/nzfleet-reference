@@ -1,0 +1,6 @@
+[Unit]
+Description=nzfleet agents: the coding workers
+
+[Slice]
+CPUQuota=2400%
+CPUWeight=20

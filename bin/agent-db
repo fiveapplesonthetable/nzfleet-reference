@@ -1,0 +1,4 @@
+#!/bin/bash
+# agent-db <name> [checkout]: a Postgres of your own with every migration applied; prints the export line.
+# agent-db --rm <name> removes it. The work is nzfleet's: `nzfleet db`.
+exec "$(dirname "$(readlink -f "$0")")/nzfleet" db "$@"

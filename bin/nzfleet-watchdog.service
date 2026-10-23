@@ -1,0 +1,7 @@
+[Unit]
+Description=nzfleet watchdog: open an issue when the daemon stops
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/nzfleet/env
+ExecStart=/bin/sh -c 'cd "$NZFLEET_CODE" && exec python3 -m nzfleet watchdog'

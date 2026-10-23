@@ -1,0 +1,41 @@
+{
+  "name": "break-it/deep_links",
+  "started_at": "2026-10-17T10:11:13+00:00",
+  "status": "findings",
+  "checks": [
+    {
+      "name": "link empty-id: lands on Home",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "link another-senders: lands on Home",
+      "passed": false,
+      "detail": "landed on unknown: ['Test environment: Custom', 'http://localhost:8080/', 'Back', 'Help with this transfer', 'Transfer not found', \"We can't find it on your account any more.\"]"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "title": "link another-senders: lands on Home",
+      "detail": "landed on unknown: ['Test environment: Custom', 'http://localhost:8080/', 'Back', 'Help with this transfer', 'Transfer not found', \"We can't find it on your account any more.\"] [01-finding-link-another-senders-lands-.png]",
+      "after_decision": 0,
+      "replay": "make journeys-replay RUN=/runs/x"
+    },
+    {
+      "severity": "medium",
+      "title": "Back left the screen as it was",
+      "detail": "transfers: ['Transfers']",
+      "after_decision": 0,
+      "replay": "x"
+    },
+    {
+      "severity": "low",
+      "title": "A setting could not be restored",
+      "detail": "font_scale",
+      "after_decision": 0,
+      "replay": "x"
+    }
+  ],
+  "finished_at": "2026-10-17T10:13:00+00:00"
+}
