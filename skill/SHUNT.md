@@ -58,34 +58,33 @@ These came from incidents, and shunt should enforce them rather than trust each 
 - Credentials are read from files and never printed, echoed, or written to the log.
 - The owner merges. Agents open PRs and never merge or ask for write access.
 
-## Where shunt stands at 1f6288a
+## Where shunt stands at ffe48a5
 
-This was checked on 23 October.
+This was checked on 23 October, by reading the code.
 
-**Fixed since 5a60d1e:**
-- The scrubber is on by default (`scrub.rs:227-237`).
-- STALLED counts the process tree's CPU (`watch.rs:303`).
-- `tell` reaches a live session instead of restarting it (`fleet.rs:742-775`).
-- `start` refuses a base it cannot resolve to an exact commit (`kit.rs:178-260`).
-- A per-agent database plugin exists (`kit.rs:353`).
-- `decide` exists (`decide/mod.rs:144`).
-- `design.md` is rewritten.
-- The oracle and e2e trace tests pass.
+**Fixed since 1f6288a:**
+- Batch reads a real workflow. `parse_workflow_yaml` (`verify.rs:2155`) refuses tabs, unclosed quotes and bad mappings, and `expand_workflow_expr` (`verify.rs:1721-1747`) refuses any `${{ }}` it has no value for. Unsupported `if:`, `uses:` and `working-directory` fail too. The silent `cargo test` fallback is gone.
+- A batch re-reads main and the PR heads after it runs and refuses the result as `head-moved` if any moved (`fleet.rs:1405-1442`).
+- A train always runs a compile command and refuses an empty one (`fleet.rs:1849-1880`).
+- `tick` calls `decide` with plain-data inputs (`fleet.rs:2588`).
+- `FdEventWatcher` (`kit.rs:792-875`) waits on inotify, pidfd and `poll(2)`.
+- The provider trait (`dispatch.rs:1495`) has start, resume, tell, alive, stop and cost, driven from `default_providers.json` with real CLI flags, and cost reads the CLI's own usage.
+- A retry that passes is recorded as a flake and never as a pass (`fleet.rs:1448-1486`), and repeated flakes queue a fix task.
+- Stall detection counts log growth, HEAD changes, dirty files and the process tree's CPU (`watch.rs:268`).
+- No nzela word is in the crates.
 
-None of the new code repeats a "do not copy" item. What remains, most important first:
+What remains, most important first:
 
-1. **The suite is still red.** `cargo test --workspace --no-fail-fast` gives 226 passed and 7 failed: `recorder_prop::prop_deterministic_restore`, both `bench_throughput` tests, `test_random_write_point_sigkill_crash`, `test_watch_until_stalled_and_report` (`test6_watch_and_report.rs:61`, a 5 s deadline), and both `hook_bench` tests (`hook_bench.rs:130,286`, a 200 ms bound). Five of them are timing tests (the 5 s deadline, the two 200 ms bounds and the two throughput benches), and there must be none: make each wait for the state it needs and assert order or state, and move the benches out of the test suite. Without a raised file limit, `inotify_init1` fails with "Too many open files". The suite must be green with nothing set.
-2. **`batch` cannot read a real workflow.** `fleet.rs:1065` parses it with `serde_json`, so a YAML workflow never loads. Every parse error and `job_for` error is skipped silently (`fleet.rs:1074`), and the run falls back to `cargo test --workspace` (`fleet.rs:1108`). The refusal of unknown expressions in `verify.rs:1659` therefore never reaches anyone. Parse YAML, fail the batch on any parse or expression error, and drop the default command.
-3. **A moved main is not caught.** `fleet.rs:1169-1210` re-reads PR heads from the cached PR list rather than the remote, and never re-reads main after the run. The merged-tree compile before a train (`fleet.rs:1574-1595`) runs only if a compile command is configured, and passes silently otherwise. Re-read main and the heads from the remote, and make the compile mandatory.
-4. **`decide` is not wired in.** It has no caller outside its tests. `execute_tick` (`fleet.rs:2048`) still calls `next_work`, `may_start` and the supervise steps directly. `tick` should call `decide`, and nothing else should decide.
-5. **No watcher runs on its own.** `decide_tidy` runs only from a command (`fleet.rs:1945`). `decide_owner_notifications` runs inside `tick` with empty deploy and fix inputs, and `decide_self_update` has no caller. Nothing watches main or the deploy. `thread::sleep` remains in `kit.rs:782,852,864,1202` and `daemon.rs:214,234`. Drive these from events.
-6. **`tell` works only through the hook.** The message is a file (`inbox/<key>.txt`) that the hook reads on the agent's next turn (`hook.rs:63`). An idle session, or a provider with no `tell_args`, gets nothing until it acts. Define what happens for a provider that cannot take a live message, and move the built-in provider list into config.
+1. **The train compiles the wrong tree.** The compile command gets `TACHO_TRAIN_SLICE_PRS` as an environment variable, but nothing builds the merged tree for the slice, so the default `cargo check --workspace` checks whatever is checked out. Build the merged tree in a scratch worktree, compile there, and refuse if main or a head moved.
+2. **Time-based tests remain.** The speed asserts are gone, but `tacho-e2e/src/lib.rs:285-302` (`wait_until`, `wait_for_api_sock`) waits with timeouts, and sleeps and deadlines remain in about 25 test files, for example `test5_daemon_restart.rs`, `test6_watch_and_report.rs:238`, `test1_replay_sequences.rs:93` and a 5 s polling deadline in `appender.rs:763-878`. No single test may be time-based: wait on the state (inotify, a pidfd, a socket's own readiness) and assert order or state. Each suite gets one overall cap that reports a hang, naming the test. The benches print timings and belong outside the test suite.
+3. **The daemon never decides.** Nothing in `tacho-daemon` calls `decide`, so `tacho tick` needs an outside caller. `batch_outcomes` is passed empty (`fleet.rs:~2582`). `tell`, `kill_burner` and `remove_worktree` still act outside `decide` (`fleet.rs:2271,2425`). Only decisions are logged, not their inputs, so a tick cannot be replayed; `tacho replay` re-runs a batch against the live tree instead. Log the inputs, make replay feed them back to `decide`, and have the daemon run it on each event.
+4. **Polling remains outside the watcher.** `thread::sleep` loops are in `tacho-system/src/lib.rs:309,345,359`, `server.rs:202,222,566`, `cgroup.rs:106`, `otlp_server.rs:87`, `appender.rs:211,383`, `sampler.rs:1057` and `cli/daemon.rs:36`. Move each onto `FdEventWatcher`, or say why it must sample.
+5. **`tell` to a live Claude still goes through the hook inbox.** Claude's `tell_program` is null, so a live session gets the message on its next hook turn. The live-resume path kills the process group and respawns, and it falls back to `resume_at` without saying so when the worktree or log is missing (`fleet.rs:~790-815`). Make the fallback an error, and define what a provider that cannot take a live message does.
+6. **Process kills trust a pid.** The tell and kill paths call `libc::kill(-pid)` on a pid that may have been reused. Check the pid still belongs to the agent (its cgroup or its start time) before signalling.
 7. **Smaller gaps:**
+   - Confirm a `flake` batch is never read as a pass by `queue` or `decide`. The flake path returns `Ok(())`.
    - Checks are not modelled as area plus affected units.
-   - A batch has no cap that reports a hang with the job's last output.
    - There is no presubmit or postsubmit mode.
-   - A retried test that passes (`fleet.rs:1163`) must be recorded as a flake, not a pass.
-   - `verify.rs:1650` has an `unwrap()`.
 
 ## Still changing in the live nzfleet
 
