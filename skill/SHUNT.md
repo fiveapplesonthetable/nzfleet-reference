@@ -57,6 +57,19 @@ These came from incidents, and shunt should enforce them rather than trust each 
 - Credentials are read from files and never printed, echoed, or written to the log.
 - The owner merges. Agents open PRs and never merge or ask for write access.
 
+## Where shunt stands at 5a60d1e
+
+This was checked on 23 October against the commit that added the fleet orchestrator. Roughly 5k lines of nzfleet's pure decisions are ported, and that part is good. The parts below are what still stand between it and replacing nzfleet, most important first.
+
+1. **The suite is still red on a fresh clone,** with about 17 failures. `every_kind_renders` cannot find `agent_state.state` (`oracle.rs:236`), and the e2e suites reject traces with "unexpected event type 5". The scrubber is still opt-in (`scrub.rs:214`); make it on by default.
+2. **Batch runs one command, not CI's jobs.** `fleet.rs:955` runs a single `--cmd`. It must read the workflow file, run each job in its image with its services, and refuse an env expression it has no value for. It must also refuse a result when main or a PR head moved during the run; today that check exists only at train and land time (`land.rs:279,299`). Add a compile of the merged tree before a train goes out.
+3. **`tell` restarts the agent.** `fleet.rs:641` appends to the brief and schedules a restart, which is the pattern this file says not to copy. Build a provider interface with start, alive, stop, cost and a live message, and move the provider names out of `fleet.rs` into config.
+4. **STALLED is still time-only.** `watch.rs:259` calls an agent stalled after 45 minutes with no log growth, commit or file change, even while its children are busy. Children already count for HUNG through the process-tree CPU (`sampler.rs:129`); make them count for STALLED too.
+5. **Worktrees and databases.** `kit.rs:187-199` falls back from a base SHA to `FETCH_HEAD`, `HEAD` and `origin/main`; refuse instead. There is no per-agent Postgres yet; make it a project plugin.
+6. **One replayable `decide`.** The logic is spread over `next_work`, `may_start` and `supervise_step`. Gather it into one function and test it against nzfleet's recorded cases.
+7. **Watchers.** Main and deploy watching, owner email, self-update and the machine's tidy pass have pure functions but no loop that runs them. Drive them from events, not `thread::sleep` (`fleet.rs:606`).
+8. **`docs/design.md:39` still lists agent control as a non-goal.** Rewrite it to match what the code now does.
+
 ## Still changing in the live nzfleet
 
 The live copy stays in nzela and keeps running the fleet until shunt replaces it, so this snapshot will fall behind. These changes were in flight when it was taken. Design for where each is going, not for what this copy shows:
