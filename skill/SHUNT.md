@@ -60,7 +60,13 @@ These came from incidents, and shunt should enforce them rather than trust each 
 
 ## Where shunt stands at 5ba1052
 
-Checked on 24 October by reading the code against this file. The suite result is added below when the clean-environment run finishes.
+Checked on 24 October by reading the code against this file and running `cargo test --workspace --no-fail-fast` with no environment set, on a machine busy with other builds. 745 passed and 9 failed, and the run then hung: `fleet::tests::rescue_fails_loudly_outside_a_repo_so_tidy_keeps_the_tree` was still running when the 50-minute suite cap stopped it. The failures:
+- `decide::tests::test_pluggable_traits_and_project_policy_unification` expects `CARGO_TARGET_DIR=/cache/warm/slot-0/target` in the agent environment (`decide/tests.rs:1409`), so it depends on a path the test does not create.
+- `decide::tests::test_multi_tick_adversarial_simulation_across_all_concerns`: no watchdog alert on the fifth plan (`decide/tests.rs:1712`).
+- Both `appender::tests::test_on_stall_hook_*` panic on `inotify_init1 failed` (`tacho-daemon/src/test_util.rs:12`). A busy machine runs out of inotify instances; shunt has to fail with a clear error and never depend on one being free in a test.
+- `test_real_cli_binary_end_to_end` (`test_cli_integration.rs:186`), `test_status_vs_agents_now_sql` (`test3_status_vs_sql.rs:109`), `test_watch_until_stalled_and_report` (`test6_watch_and_report.rs:76`), `test_multi_agent_git_chaos` (`test8_multi_agent_git_chaos.rs:542`) and one more e2e test.
+
+A hang the cap catches must be reported with the test's name and last output, which is what the suite cap is for; here it only showed as the run being stopped.
 
 **Fixed since 03135fc:**
 - No `thread::sleep` or `tokio::time::sleep` is left anywhere. Tests wait on pidfd, inotify and `poll(-1)` (`tacho-e2e/src/lib.rs:309-580`), with one overall cap, `SUITE_SAFETY_CAP` (`lib.rs:453`).
