@@ -58,32 +58,28 @@ These came from incidents, and shunt should enforce them rather than trust each 
 - Credentials are read from files and never printed, echoed, or written to the log.
 - The owner merges. Agents open PRs and never merge or ask for write access.
 
-## Where shunt stands at 03135fc
+## Where shunt stands at 5ba1052
 
-This was checked on 23 October, by reading the code and running the suite with a clean environment.
+Checked on 24 October by reading the code against this file. The suite result is added below when the clean-environment run finishes.
 
-**Fixed since ffe48a5:**
-- The moved-ref refusal works when origin has no copy of a branch: live heads fall back to `refs/heads/<branch>` and main to `refs/heads/main` (`fleet.rs:1160,1220-1233`), and its test moves a real branch instead of editing the database.
-- A train compiles each slice in a scratch worktree at the starting main with every PR head merged in (`fleet.rs:2024-2092`), then refuses if main or a head moved (`fleet.rs:2122-2134`).
-- Decision inputs and plans are logged to `decision_ticks`, and `batch_outcomes` and burners are filled in.
-- Most `thread::sleep` loops in the daemon are replaced by `poll`, pidfd and signal waits.
-- A live resume with a missing worktree or log is now an error, not a quiet fallback.
-- `still_ready` lands only a batch whose status is `passed` (`land.rs:91`).
+**Fixed since 03135fc:**
+- No `thread::sleep` or `tokio::time::sleep` is left anywhere. Tests wait on pidfd, inotify and `poll(-1)` (`tacho-e2e/src/lib.rs:309-580`), with one overall cap, `SUITE_SAFETY_CAP` (`lib.rs:453`).
+- `tacho replay` checks a recorded batch, then a PR, then a tick, and an unknown id is `NotFound` (`shape.rs:316-420`). Divergence is an error, not a panic.
+- The tidy rescue commits to `refs/tacho/rescue/<key>-<ts>` instead of `git stash`, and a test asserts the stash list stays empty.
+- `tell` reaches a live Claude through the hook inbox (`session.rs:576`, `hook.rs:510-513`).
+- A check is an area plus affected units (`verify/types.rs:20`, `plan.rs:146`), carried through batch and prove.
+- `verify_agent_pid` fails closed when `/proc/<pid>/stat` cannot be read and checks the recorded start time; `verify_kill_target` checks start time, cwd and pgid.
+- `handle_decide` refuses a tick without a `main_sha`, and `decision_ticks` is pruned hourly.
 
-What remains, most important first:
+Everything below has to land for shunt to replace nzfleet. Land it all; there is no partial cut-over.
 
-1. **The suite is redder than before.** With a clean environment, on a machine busy with other builds, `cargo test --workspace --no-fail-fast` gives 215 passed and 11 failed (ffe48a5 had 2): `prop_oracle_verification`, `prop_random_track_keys_oracle` (`recorder_prop.rs:506`), `test_on_stall_hook_timeout_kills_process_group_and_unblocks_second_hook`, both `tail` tests (partial line, truncation and rotation), `test_daemon_restart_lifecycle`, `test_fleet_tick_dispatch_reap_land_mismatch_and_tidy_rescue`, `test_kit_job_wait_and_kill`, `test_multi_agent_git_chaos`, `test_strict_start_base_db_plugin_live_tell_and_batch_head_moved` and `test_torture_daemon_chaos_and_recovery`. Failing under load is what time-based tests do. Make them wait on state, then run the suite five times beside a heavy build, and it must be green every time.
-2. **Time-based tests remain.** About 58 `thread::sleep` calls in 12 test files (18 in `test_torture.rs`), `wait_until` or deadlines in 14 files, and a timeout in `wait_for_api_sock` (`tacho-e2e/src/lib.rs:320-373`). No single test may wait on time; wait on the state and assert order or state. One overall cap per suite is fine.
-3. **The daemon still does not decide on its own.** It calls `decide` only on a "tick" or "decide" API command (`server.rs:491-542`), and that path logs an empty `main_sha` and no batch outcomes, which poisons replay. `tell_actions` is always empty (`decide/mod.rs:553`); `tell` (`fleet.rs:864`) and worktree removal (`fleet.rs:2886-2899`) act outside `decide`. Every tick feeds all finished batches back in, flakes included, and `decision_ticks` is never pruned.
-4. **Killing a process still trusts a pid.** `verify_agent_pid` (`fleet.rs:106`) is never given a recorded start time, returns true when `/proc/<pid>/stat` cannot be read, and accepts any process whose command line contains "claude", "tacho", "gemini" or "codex". Burner kills are unconditional after 600 s (`fleet.rs:2866`). Record each agent's pid with its start time or cgroup and refuse anything that does not match.
-5. **`tacho replay` regressed.** An id that is not a tick falls back to the latest tick (`fleet.rs:1836-1850`), so batch replay is unreachable and a numeric batch id is read as a tick id. Its `assert_eq!` panics instead of returning an error.
-6. **Errors are dropped.** `record_decision_tick` and the worktree removal in `tick` discard errors with `let _ =`. The train's scratch worktree is left behind when `Command::output()` fails (`fleet.rs:2063,2088`).
-7. **The tidy rescue runs `git stash`** and then force-removes the worktree. Worktrees share one stash, so this can lose or mix another agent's work. Commit to a rescue branch instead.
-8. **Smaller gaps:**
-   - A live Claude still gets `tell` through the hook inbox on its next turn.
-   - Timed `poll(…, 100)` loops remain in `server.rs` and `otlp_server.rs`, and sleeps in `sampler.rs:1060`, `appender.rs:389`, `system/lib.rs:311`, `client.rs:85` and `tail.rs:198`.
-   - Confirm the queue itself never reuses a `flake` batch as a pass.
-   - Checks are still not modelled as area plus affected units.
+1. **The daemon decides on its own.** `decide` still runs only on an API "tick" or "decide" command (`server.rs:636`, `handle_decide` at `server.rs:816`) and on request from the CLI (`fleet/watch.rs:438`). The daemon must observe the world (agents, PRs, CI, main) on events and run `decide` itself, with every action, `tell` and worktree removal included, coming out of `decide`. Check that `tell_actions` is filled and nothing acts outside it.
+2. **No kill without identity.** When no start time is recorded, `store.rs:140-175` still accepts any process whose cgroup, environment or command line contains the agent key, and `watch.rs:261` kills a duplicate batch with `verify_agent_pid(pid, dup_id, None, None)`. Record a start time or cgroup for every pid shunt may kill, and refuse a kill without one.
+3. **No dropped errors where a caller can act.** `main.rs:189,313,425,443` (`record_decision`, `store.mutate`), `watch.rs:459` (decision on a burner kill), `kit.rs:274,295` (git commands), `train.rs:681` (the scratch worktree removal, so a failed cleanup is silent), `daemon.rs:305` (the tick prune) and the telemetry emits in `batch.rs:534,629,783,815`. Each is handled or returned.
+4. **No per-test wait on time.** `wait_until(timeout, …)` (`lib.rs:310`) is a `yield_now` spin with a deadline; the deadline spins in `kit_and_fleet_tests.rs:569`, `run_tests.rs:48` and `queries.rs:1111`; the short timeouts set on the thing under test in `otlp_server_test.rs:407` (200 ms) and `appender/tests.rs:91` (300 ms); and the socket read timeouts in `test_torture.rs:264,283`. Wait on the state and assert order or state. `wait_for_api_sock` ignores its `Duration`; drop the argument. Confirm `test_torture.rs:1681-1778` reports timings without asserting a speed.
+5. **No timed polls in the product.** `tail.rs:213` (500 ms), `client.rs:102` (250 ms), and `tail.rs:579`, a `poll(NULL, 0, ≤100)` used as a sleep when inotify is exhausted. Block on the event, or fail loudly when the event source is gone.
+6. **Docs match the code.** `README.md:26` and `README.md:265` say the scrubber is off by default; `daemon/config.rs:35` turns it on, which is right. Model names such as `gpt-6-luna` belong in config, not in code defaults.
+7. **The proof.** With no environment set, `cargo test --workspace --no-fail-fast` green five times in a row beside a heavy build on the same machine. Then run shunt beside nzfleet on the same fleet for a few days with `decide` logged, and compare the decisions.
 
 ## Still changing in the live nzfleet
 
@@ -92,7 +88,9 @@ The live copy stays in nzela and keeps running the fleet until shunt replaces it
 - **Fork sync is going away.** Pull requests now run on the upstream repository's own PR-tier runners, and fork pushes no longer get CI. Do not build the fork-sync paths.
 - **Batches take one more CI expression.** `areas.py` now supplies `CEILING_BASE` alongside `NZELA_BASE`. Expect more of these, and keep the refuse-if-unknown rule rather than a fixed list.
 - **Rust and Android checks are becoming incremental.** Rust checks only the crates a change reaches, in a warm target. Android builds and tests by Gradle module. The goal is seconds locally with warm build servers. An area's checks will become "the affected units of this area", so model a check as area plus affected units, not area alone.
-- **The crate split is in its last steps.** Contract suites on every port, an in-process simulator and a split load driver are coming. They change which checks a change selects.
+- **The crate split has landed** (nzela #1845); the platform crate's split finishes next. Contract suites on every port, an in-process simulator and a split load driver change which checks a change selects.
+- **Nothing writes to the root disk.** Every agent and runner gets `TMPDIR`, `TMP`, `TEMP` and the JVM's `java.io.tmpdir` under the fleet's tmp directory, `nzfleet setup` installs the same for the runner services, tidy removes old leftovers there, and the fleet check alerts when `/` is short. Shunt must do the same from day one.
+- **The area selector writes no bytecode** into the checkout it runs from, so a hook or CI run leaves `git status` clean.
 - **Stall detection is being fixed** to count child processes, after workers waiting on long checks were stopped as stalled. Shunt should start from the fixed behaviour.
 - **A console browser test run that hangs** after its tests pass is being fixed. A batch area must have a cap, and hitting the cap must be reported as a hang with the last thing the job printed, not as a cancellation.
 - **Presubmit and postsubmit are being split.** Before merge runs a subset chosen by the change, after merge runs everything, and a full gate runs before real-money production. Shunt's batch should support both modes.
