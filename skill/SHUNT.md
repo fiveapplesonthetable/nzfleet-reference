@@ -244,3 +244,5 @@ Both blockers from 31bd756 are fixed, and so is most of step 4 of the last stret
 Tests, sandboxed as before: build 3 min 27 s at load ~190; 888 non-daemon and 85 daemon tests passed with none failed; the fleet root unchanged and the checkout clean afterwards, and no daemon process left behind. Nineteen `tacho daemon` processes from earlier versions' test runs (23 Oct and the edf6662 run) were still alive and were stopped.
 
 Still open: steps 3 (refuse a worker without its own worktree), 5 (parity tests), 6 (a day beside nzfleet) and five green runs in a row under load.
+
+A test run of 8a6ea0b left a `yes` burner from the starve watch running for nine hours, reparented to init, at a full core (found 25 Oct at load 176). Before cutover, a starve test must reap its burner's process group in every exit path, and the suite must end with no `yes` whose environment carries `TACHO_STARVE=1`; add that check to the "no process left behind" assertion.
