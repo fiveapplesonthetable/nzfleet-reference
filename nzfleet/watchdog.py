@@ -6,7 +6,7 @@ import os
 import subprocess
 import time
 
-from . import plan, tick, world
+from . import machine, plan, rootdisk, tick, world
 
 UNIT = "nzfleet"
 HEARTBEAT = os.path.join(os.path.dirname(tick.LOG), "daemon.heartbeat")
@@ -38,6 +38,17 @@ def _heartbeat_age() -> float | None:
         return time.time() - os.path.getmtime(HEARTBEAT)
     except OSError:
         return None
+
+
+def root_disk(usage=machine.root_usage) -> str:
+    """Keeps one open issue while `/` is past the warning line, and closes it when it is not."""
+    warning = rootdisk.warning(*usage())
+    found = world.issue(rootdisk.TITLE)
+    if warning and (found is None or found["body"] != warning):
+        world.set_issue(rootdisk.TITLE, warning)
+    elif not warning and found:
+        world.close_issue(found["number"])
+    return f"root disk: {warning or 'comfortable'}"
 
 
 def check() -> str:

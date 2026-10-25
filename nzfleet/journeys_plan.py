@@ -84,7 +84,7 @@ def environment(settings: Settings, runs: str, lab: str, target: str) -> dict:
 def steps(settings: Settings, worktree: str, runs: str, lab: str, target: str) -> list:
     """Build main, start the lab, install the app on the one phone, drive it, take the lab down."""
     env = tuple(sorted(environment(settings, runs, lab, target).items()))
-    lab_sh = posixpath.join(worktree, "scripts", "device-lab.sh")
+    lab_sh = posixpath.join(worktree, "tools", "nzfleet", "devloop", "device-lab.sh")
     make = ("make", "-C", worktree)
     return [
         Step("build", ("cargo", "+1.98", "build", "--bin", "nzela", "--bin", "nzstandin"), env, worktree),
@@ -153,4 +153,4 @@ def new_issues(found: list, is_open) -> list:
 
 
 def teardown(worktree: str, env: tuple) -> Step:
-    return Step("down", (posixpath.join(worktree, "scripts", "device-lab.sh"), "down"), env, worktree, ok_codes=(0, 1))
+    return Step("down", (posixpath.join(worktree, "tools", "nzfleet", "devloop", "device-lab.sh"), "down"), env, worktree, ok_codes=(0, 1))

@@ -102,7 +102,7 @@ The live copy stays in nzela and keeps running the fleet until shunt replaces it
 - **Presubmit and postsubmit are being split.** Before merge runs a subset chosen by the change, after merge runs everything, and a full gate runs before real-money production. Shunt's batch should support both modes.
 - **Compromises are tracked in nzela issue #1787** and are being worked through. Several touch nzfleet's checks.
 
-When the snapshot is refreshed, this section is updated with it.
+When the snapshot is refreshed, this section is updated with it. The code was last refreshed from nzela main on 25 Oct (d20c6570e).
 
 ## What to build first
 

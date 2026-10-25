@@ -9,17 +9,18 @@ import shutil
 import subprocess
 import time
 
-from . import config, cpu_budget
+from . import config, cpu_budget, rootdisk
 METER = cpu_budget.here()
 LOW_DISK_GB = 20
 
 
 # The CPU quota of each kind is on its slice (bin/nzfleet-*.slice), so every scope of a kind shares it.
 # Docker containers they start run under the daemon's cgroup and are not covered.
-SLICES = {"batch": "nzfleet-batch.slice", "agent": "nzfleet-agent.slice"}
+SLICES = {"batch": "nzfleet-batch.slice", "agent": "nzfleet-agent.slice", "background": "nzfleet-background.slice"}
 LIMITS = {
     "batch": ["MemoryMax=48G"],
     "agent": ["MemoryHigh=12G", "MemoryMax=16G"],
+    "background": [],
 }
 
 
@@ -48,6 +49,21 @@ def stop_unit(unit: str) -> None:
 
 def free_gb(path: str = "/") -> int:
     return shutil.disk_usage(path).free // 2**30
+
+
+def root_usage() -> tuple:
+    """(percent in use, GB free) of the system disk."""
+    usage = shutil.disk_usage("/")
+    return rootdisk.used_percent(usage.total, usage.free), usage.free // 2**30
+
+
+def prune_runner_volumes() -> str:
+    """Runs the root helper's low-disk pass through the one sudoers rule that allows it; returns what it said."""
+    try:
+        done = subprocess.run(["sudo", "-n", rootdisk.ROOT_PRUNE, "check"], capture_output=True, text=True, timeout=600, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"runner prune did not run: {e}"
+    return f"runner prune exited {done.returncode}: {(done.stdout + done.stderr).strip()[-500:]}"
 
 
 def load() -> float:
@@ -87,7 +103,8 @@ def reading(proc: str = "/proc", mounts: tuple | None = None) -> dict:
     watched = mounts if mounts is not None else tuple(dict.fromkeys(("/", "/dev/shm", "/srv/fleet", config.HOME, config.WORK, config.REPO, config.TARGETS)))
     for mount in watched:
         try:
-            out["disk"].append({"mount": mount, "free_gb": free_gb(mount)})
+            usage = shutil.disk_usage(mount)
+            out["disk"].append({"mount": mount, "free_gb": usage.free // 2**30, "used_percent": rootdisk.used_percent(usage.total, usage.free)})
         except OSError:
             continue
     temps = []

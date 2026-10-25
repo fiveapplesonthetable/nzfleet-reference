@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from . import runs
+from . import runs, tmpdirs
 
 INTERVAL = 15 * 60
 BUILD_IDLE = 90 * 60
@@ -71,6 +71,8 @@ class Snapshot:
     held_ports: frozenset = frozenset()  # database ports named in live processes' DATABASE_URL
     batches: frozenset = frozenset()     # ids of batches whose process is alive
     starts: tuple = ()                   # (slug, path) of each worktree `nzfleet start` made
+    temps: tuple = ()                    # Tree: our own temporary files, in the system directory and under the fleet's
+    scratch: frozenset = frozenset()     # temporary directories named by TMPDIR in live processes
     caches: tuple = ()                   # Sized: the caches batches share and the build directories of warm slots
 
 
@@ -133,6 +135,10 @@ class _Ownership:
         return (any(_inside(held, path) for held in self.snap.held_paths)
                 or any(path in arg for arg in self.snap.held_args))
 
+    def scratched(self, path: str) -> bool:
+        """Whether a live process was given a temporary directory that holds `path`."""
+        return any(_inside(path, root) for root in self.snap.scratch)
+
     def batch(self, name: str) -> bool:
         return any(name.startswith(f"nzf-{batch}") for batch in self.snap.batches)
 
@@ -157,11 +163,14 @@ def decide(snap: Snapshot) -> list:
     for tree in snap.builds:
         if tree.idle >= BUILD_IDLE and not own.busy(os.path.basename(tree.path), tree.path):
             actions.append(RemoveTree(tree.path, f"build output untouched for {_hours(tree.idle)}"))
+    for tree in snap.temps:
+        if tree.idle >= tmpdirs.IDLE and not own.used(tree.path) and not own.scratched(tree.path):
+            actions.append(RemoveTree(tree.path, f"temporary files untouched for {_hours(tree.idle)}"))
     for c in snap.caches:
         if c.gb > c.cap and not c.held:
             actions.append(RemoveTree(c.path, f"cache is {c.gb} GB, over its {c.cap} GB"))
     for tree in snap.unpacks:
-        if tree.idle >= UNPACK_IDLE:
+        if tree.idle >= UNPACK_IDLE and not own.used(tree.path):
             actions.append(RemoveTree(tree.path, f"test runtime unpacked {_hours(tree.idle)} ago"))
     for c in snap.containers:
         if c.name.startswith(BATCH_PREFIX) and c.age >= BATCH_CONTAINER_IDLE and not own.batch(c.name):

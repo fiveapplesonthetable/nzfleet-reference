@@ -6,13 +6,13 @@ import os
 import subprocess
 from dataclasses import dataclass
 
-from . import config, selfupdate, statuses, units
+from . import config, rootdisk, selfupdate, statuses, units
 
 BIN = units.BIN
 LINKED = ("nzfleet", "agent-db", "gradle-slot")
 POOL_BASE, POOL_SIZE, POOL_NETWORKS = "10.210.0.0/16", 24, 256
 HOOKS = ("agent-guard.py", "bash-guard.py", "context-cap.py")
-ROOT_PRUNE = "/usr/local/sbin/nzela-runner-prune"
+ROOT_PRUNE = rootdisk.ROOT_PRUNE
 ROOT_LINE = "7 * * * * timeout 10m flock -n /run/lock/nzela-runner-prune.lock /usr/local/sbin/nzela-runner-prune scheduled"
 
 
@@ -124,7 +124,7 @@ def warm_directories() -> tuple:
 
 def ci_runner_steps(repo: str) -> list:
     """What to run once, by hand, so the CI runners keep their compiler cache and build directories between jobs."""
-    helper = os.path.join(repo, "scripts", "ci-warm-cache.py")
+    helper = os.path.join(repo, "tools", "nzfleet", "runner", "ci-warm-cache.py")
     return [
         "Self-hosted default caches need private rootless-Docker ownership before CI uses them:",
         f"  sudo python3 {helper} provision --repository-id \"$(gh api repos/nzela-org/nzela --jq .id)\" --owner-uid 1001",
@@ -143,7 +143,7 @@ def warm(run, say) -> list:
         if path and not os.path.isdir(path):
             os.makedirs(path, exist_ok=True)
             say(f"made {path}")
-    installer = os.path.join(config.REPO, "scripts", "install-sccache.sh")
+    installer = os.path.join(config.REPO, "tools", "nzfleet", "runner", "install-sccache.sh")
     if not os.path.exists(installer):
         return [f"{installer} is not in this checkout; fetch upstream main"]
     done, out = run(("sh", installer, os.path.join(config.HOME, "bin")))
@@ -189,6 +189,15 @@ def setup(home: str, run=run_tool, say=print) -> int:
     changed = units.sync(home, BIN, lambda: run(("systemctl", "--user", "daemon-reload")))
     if changed:
         say(f"installed {', '.join(changed)}")
+    if units.sync_runner_tmp(home, config.tmp_root(), lambda: run(("systemctl", "--user", "daemon-reload"))):
+        say(f"CI runners write temporary files under {config.tmp_root()}; restart them with systemctl --user restart 'nzela-runner@*' when no job is running")
+    hook = os.path.join(repo, "tools", "nzfleet", "runner", "runner-job-started.sh")
+    for path in units.sync_runner_hook(home, hook, config.FILE.get("NZFLEET_MIRROR_TOKEN_FILE", ""),
+                                       lambda: run(("systemctl", "--user", "daemon-reload"))):
+        say(f"installed {path}; restart the runners with systemctl --user restart 'nzela-runner@*' when no job is running")
+    moved = units.sync_background(home, lambda: run(("systemctl", "--user", "daemon-reload")))
+    if moved:
+        say(f"{', '.join(moved)} will run in nzfleet-background.slice from their next start; setup does not restart them, so a running capture is not interrupted")
     for unit in ("nzfleet.service", "nzfleet-serve.service", "nzfleet-watchdog.timer"):
         done, out = run(("systemctl", "--user", "enable", "--now", unit))
         if done != 0:
@@ -217,7 +226,7 @@ def setup(home: str, run=run_tool, say=print) -> int:
         say(line)
     say("")
     say("As root, once; setup never touches root's crontab:")
-    say(f"  sudo install -m 755 {os.path.join(repo, 'scripts', 'runner-prune.sh')} {ROOT_PRUNE}")
+    say(f"  sudo install -m 755 {os.path.join(repo, 'tools', 'nzfleet', 'runner', 'runner-prune.sh')} {ROOT_PRUNE}")
     say(f"  sudo crontab -e   and add the line   {ROOT_LINE}")
     say(f"  /etc/sudoers.d/nzfleet-prune   {os.environ.get('USER', '<user>')} ALL=(root) NOPASSWD: {ROOT_PRUNE} check")
     return 1 if lacking else 0

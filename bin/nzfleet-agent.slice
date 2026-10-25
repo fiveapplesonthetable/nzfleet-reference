@@ -2,5 +2,5 @@
 Description=nzfleet agents: the coding workers
 
 [Slice]
-CPUQuota=2400%
+CPUQuota=1200%
 CPUWeight=20

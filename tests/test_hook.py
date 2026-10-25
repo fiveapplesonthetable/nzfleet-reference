@@ -23,9 +23,11 @@ class PrePush(unittest.TestCase):
         (self.caller / "scripts").mkdir()
         (self.caller / "tools/nzfleet/nzfleet").mkdir(parents=True)
         shutil.copy2(ROOT / ".githooks/pre-push", self.caller / ".githooks/pre-push")
-        shutil.copy2(ROOT / "scripts/changed-areas.sh", self.caller / "scripts/changed-areas.sh")
-        guard = self.caller / "scripts/no-loosened-limits.sh"
-        guard.write_text("#!/bin/sh\nprintf called > \"$HOOK_GUARD_MARKER\"\n")
+        (self.caller / "tools/nzfleet/bin").mkdir(parents=True)
+        shutil.copy2(ROOT / "tools/nzfleet/bin/nzfleet-select", self.caller / "tools/nzfleet/bin/nzfleet-select")
+        shutil.copytree(ROOT / "tools/nzfleet/nzfleet/selection", self.caller / "tools/nzfleet/nzfleet/selection")
+        guard = self.caller / "tools/nzfleet/bin/nzfleet-guard"
+        guard.write_text("#!/bin/sh\n[ \"$1\" != limits ] || printf called > \"$HOOK_GUARD_MARKER\"\n")
         guard.chmod(0o755)
         checks = self.caller / "scripts/checks.sh"
         checks.write_text("""#!/bin/bash

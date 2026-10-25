@@ -7,9 +7,10 @@ import tempfile
 import unittest
 
 from nzfleet import plan
+from nzfleet.selection import areas as selection
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-SELECTOR = os.path.join(ROOT, "scripts", "changed-areas.sh")
+SELECTOR = "tools/nzfleet/nzfleet/selection/areas.py"
 
 
 def read(relative: str) -> str:
@@ -22,15 +23,13 @@ def tracked() -> set:
 
 
 def literal_paths_of_selector() -> set:
-    """Every file a pattern or case arm of changed-areas.sh names outright, with `(a|b)` groups spelled out."""
-    script = read("scripts/changed-areas.sh")
+    """Every file a pattern of the selection rules names outright, with `(a|b)` groups spelled out."""
+    script = read(SELECTOR)
     found = set()
     for head, options, ext in re.findall(r"\^((?:[\w-]+/)*)\(([\w|-]+)\)\\\.(\w+)\$", script):
         found.update(f"{head}{option}.{ext}" for option in options.split("|"))
     for path, ext in re.findall(r"\^((?:[\w-]+/)+[\w-]+)\\\.(\w+)\$", script):
         found.add(f"{path}.{ext}")
-    for arm in re.findall(r"^\s+((?:[\w./-]+\|)+[\w./-]*)[\\)]", script, re.M):
-        found.update(p for p in arm.split("|") if "." in os.path.basename(p) and "*" not in p)
     return found
 
 
@@ -45,14 +44,22 @@ class SelectionNamesLivePaths(unittest.TestCase):
                   for line in read(f"scripts/{name}").splitlines() if line.strip() and not line.startswith("#")}
         self.assertEqual(sorted(p for p in listed if p not in tracked()), [])
 
+    def test_every_path_a_guard_names_in_its_source_is_tracked(self):
+        named = set()
+        for name in ("frontend/admin/scripts/check-colours.mjs", "frontend/admin/scripts/check-sizes.mjs"):
+            named.update(f"frontend/admin/src/{item}" for item in re.findall(r"\['([^']+\.tsx?)',", read(name)))
+        roles = re.search(r"local roles=([^ ]+)", read("scripts/areas/rust.sh"))
+        self.assertIsNotNone(roles)
+        named.add(roles.group(1))
+        self.assertEqual(sorted(p for p in named if p not in tracked()), [])
+
     def test_the_planner_reads_the_inputs_the_selector_reads(self):
-        script = read("scripts/changed-areas.sh")
-        for area, name in (("android", "android_reads"), ("console", "console_reads"), ("console-crawl", "console_reads")):
-            declared = re.search(rf"^{name}='([^']*)'", script, re.M).group(1)
+        for area, declared in (("android", selection.ANDROID_READS), ("console", selection.CONSOLE_READS),
+                               ("console-crawl", selection.CONSOLE_READS)):
             self.assertEqual(plan.TRAIN_INPUTS[area].pattern, declared, area)
 
     def test_every_area_the_selector_can_select_has_a_gating_output_in_ci(self):
-        areas = subprocess.run(["bash", SELECTOR, "all"], capture_output=True, text=True, check=True).stdout.split()
+        areas = selection.select([], "all")[0]
         ci = read(".github/workflows/ci.yaml")
         outputs = set(re.findall(r"^      (\w+): \$\{\{ steps\.areas\.outputs\.\w+ \}\}$", ci, re.M))
         jobs = set(re.findall(r"^  ([\w-]+):$", ci, re.M))
@@ -75,15 +82,8 @@ class AMovedFileSelectsTheAreaItLeft(unittest.TestCase):
             os.makedirs(os.path.join(repo, "docs"))
             git("mv", "frontend/admin/src/a.ts", "docs/a.md")
             git("commit", "-q", "-m", "two")
-            for script in ("scripts/areas-since.sh",):
-                os.makedirs(os.path.join(repo, "scripts"), exist_ok=True)
-                for name in (script, "scripts/changed-areas.sh"):
-                    with open(os.path.join(repo, name), "w") as f:
-                        f.write(read(name))
-                    os.chmod(os.path.join(repo, name), 0o755)
-                git("add", ".")
-                git("commit", "-q", "-m", "scripts")
-            out = subprocess.run(["bash", "scripts/areas-since.sh", "HEAD~2"], cwd=repo, capture_output=True, text=True)
+            out = subprocess.run([os.path.join(ROOT, "tools/nzfleet/bin/nzfleet-select"), "since", "HEAD~1"], cwd=repo,
+                                 capture_output=True, text=True)
             self.assertIn("console", out.stdout.split(), out.stderr)
 
     def test_no_git_diff_that_lists_names_folds_a_rename_into_its_destination(self):

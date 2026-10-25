@@ -80,15 +80,21 @@ class EnvFile(unittest.TestCase):
 
 
 class PrivateTemporaryDirectory(unittest.TestCase):
-    def test_a_child_gets_a_private_directory_under_its_configured_fleet_home(self):
-        with tempfile.TemporaryDirectory() as home, mock.patch.object(config, "HOME", home):
+    def test_a_child_gets_a_private_directory_beside_the_scratch_worktrees(self):
+        with tempfile.TemporaryDirectory() as home, mock.patch.object(config, "WORK", os.path.join(home, "work")):
             env = config.with_private_tmpdir({"TMPDIR": "/tmp", "MARKER": "kept"})
             self.assertEqual(env["TMPDIR"], os.path.join(home, "tmp"))
             self.assertEqual(env["MARKER"], "kept")
             self.assertEqual(os.stat(env["TMPDIR"]).st_mode & 0o777, 0o700)
 
+    def test_a_directory_others_can_read_but_not_write_is_accepted(self):
+        with tempfile.TemporaryDirectory() as home, mock.patch.object(config, "WORK", os.path.join(home, "work")):
+            os.mkdir(os.path.join(home, "tmp"))
+            os.chmod(os.path.join(home, "tmp"), 0o775)
+            self.assertEqual(config.private_tmpdir(), os.path.join(home, "tmp"))
+
     def test_a_shared_directory_is_refused(self):
-        with tempfile.TemporaryDirectory() as home, mock.patch.object(config, "HOME", home):
+        with tempfile.TemporaryDirectory() as home, mock.patch.object(config, "WORK", os.path.join(home, "work")):
             path = os.path.join(home, "tmp")
             os.mkdir(path, mode=0o777)
             os.chmod(path, 0o777)
@@ -100,7 +106,7 @@ class PrivateTemporaryDirectory(unittest.TestCase):
             before = os.getcwd()
             try:
                 os.chdir(root)
-                with mock.patch.object(config, "HOME", "fleet"):
+                with mock.patch.object(config, "WORK", "fleet/work"):
                     env = config.with_private_tmpdir({"MARKER": "kept"})
                 self.assertEqual(env["TMPDIR"], os.path.join(root, "fleet", "tmp"))
                 os.mkdir(os.path.join(root, "elsewhere"))
@@ -116,7 +122,7 @@ class PrivateTemporaryDirectory(unittest.TestCase):
                 os.chdir(before)
 
     def test_a_symlink_or_wrong_owner_is_refused(self):
-        with tempfile.TemporaryDirectory() as home, mock.patch.object(config, "HOME", home):
+        with tempfile.TemporaryDirectory() as home, mock.patch.object(config, "WORK", os.path.join(home, "work")):
             outside = os.path.join(home, "outside")
             os.mkdir(outside, mode=0o700)
             path = os.path.join(home, "tmp")

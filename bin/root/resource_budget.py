@@ -35,6 +35,17 @@ def quota(path):
     return int(match[1]) // 100
 
 
+def weight(path):
+    match = re.search(r"^CPUWeight=(\d+)$", path.read_text(), re.MULTILINE)
+    if not match:
+        raise ValueError(f"missing CPUWeight: {path}")
+    return int(match[1])
+
+
+def configured_weights():
+    return {"owner": weight(ROOT / "user-1000.slice.conf"), "pr": weight(ROOT / "user-1002.slice.conf")}
+
+
 def configured_quotas():
     return {
         "trusted": quota(ROOT / "user-1001.slice.conf"),
@@ -42,6 +53,7 @@ def configured_quotas():
         "pr": quota(ROOT / "user-1002.slice.conf"),
         "batch": quota(BIN / "nzfleet-batch.slice"),
         "agent": quota(BIN / "nzfleet-agent.slice"),
+        "background": quota(BIN / "nzfleet-background.slice"),
     }
 
 
@@ -70,6 +82,12 @@ def android_cpus(workflow):
     return int(processor[1])
 
 
+def heaviest_job(workflow):
+    """The CPUs the largest single job declares; no runner needs more than this."""
+    containers = ("check", "compat", "e2e", "console", "console-browser")
+    return max([job_cpus(workflow, job) for job in containers] + [android_cpus(workflow)])
+
+
 def postgres_cpus(workflow, job):
     section = job_section(workflow, job)
     if not re.search(r"(?m)^    services:\n      postgres:", section):
@@ -80,7 +98,7 @@ def postgres_cpus(workflow, job):
     return int(match[1])
 
 
-def validate(host, trusted_affinity, shared_affinity, workflow, quotas, reserves=4):
+def validate(host, trusted_affinity, shared_affinity, workflow, quotas, reserves=4, weights=None):
     if trusted_affinity & shared_affinity or trusted_affinity | shared_affinity != host:
         raise ValueError("CPU affinity domains overlap or omit host CPUs")
     trusted = quotas["trusted"]
@@ -88,11 +106,20 @@ def validate(host, trusted_affinity, shared_affinity, workflow, quotas, reserves
     pr = quotas["pr"]
     batch = quotas["batch"]
     agent = quotas["agent"]
-    if trusted > len(trusted_affinity) or owner + pr > len(shared_affinity):
+    background = quotas["background"]
+    if trusted > len(trusted_affinity) or max(owner, pr) > len(shared_affinity):
         raise ValueError("CPU quota exceeds effective affinity; lower the slice quotas or assign more effective CPUs")
-    if max(batch, agent) > owner:
-        raise ValueError("batch or agent quota exceeds their shared owner slice ceiling")
-    if trusted + owner + pr + reserves > len(host):
+    # Owner and pull-request quotas are ceilings on the same CPUs, so they may sum past them; the
+    # owner's larger weight is what decides a contest, so it must stay larger.
+    weights = weights or configured_weights()
+    if weights["owner"] <= weights["pr"]:
+        raise ValueError("the owner slice must weigh more than the pull-request slice, or a busy PR tier starves the owner")
+    if max(batch, agent) >= owner or background > owner:
+        raise ValueError("batch and agent quotas must stay below the owner slice, and background within it, so none fills the owner's interactive headroom")
+    heaviest = heaviest_job(workflow)
+    if pr < heaviest:
+        raise ValueError(f"pull-request tier has {pr} CPUs, its heaviest job declares {heaviest}")
+    if trusted + max(owner, pr) + reserves > len(host):
         raise ValueError("aggregate quotas leave too little system headroom; lower configured quotas or reserve")
     rust = [job_cpus(workflow, job) for job in ("check", "compat", "e2e")]
     console = job_cpus(workflow, "console-browser")
@@ -156,12 +183,12 @@ def range_string(values):
     return ",".join(spans)
 
 
-def plan(host, workflow, quotas, reserves=4):
+def plan(host, workflow, quotas, reserves=4, weights=None):
     trusted_count = quotas["trusted"]
     ordered = sorted(host)
     trusted_affinity = set(ordered[:trusted_count])
     shared_affinity = set(ordered[trusted_count:])
-    limits = validate(host, trusted_affinity, shared_affinity, workflow, quotas, reserves)
+    limits = validate(host, trusted_affinity, shared_affinity, workflow, quotas, reserves, weights)
     return trusted_affinity, shared_affinity, limits
 
 
@@ -178,7 +205,7 @@ def main():
     try:
         quotas = configured_quotas()
         if args.configured:
-            configured_host_size = quotas["trusted"] + quotas["owner"] + quotas["pr"] + args.system_reserve
+            configured_host_size = quotas["trusted"] + max(quotas["owner"], quotas["pr"]) + args.system_reserve
             host = set(range(configured_host_size))
         else:
             host_spec = args.host_cpus or Path("/sys/fs/cgroup/cpuset.cpus.effective").read_text().strip()

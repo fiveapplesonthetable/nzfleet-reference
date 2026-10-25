@@ -166,6 +166,7 @@ def serve(args) -> int:
 
 def watch_daemon(_args) -> int:
     print(watchdog.check())
+    print(watchdog.root_disk())
     return 0
 
 
@@ -452,7 +453,7 @@ def tidy(args) -> int:
             current["todo"] = remaining
         print(f"retired {len(retired_now)} stale run(s)" if retired_now else "no stale runs")
         return 0
-    for line in janitor.run(janitor.Host(list(config.BUILD_ROOTS), config.WORK, config.REPO, state=state.read(),
+    for line in janitor.run(janitor.Host(list(config.BUILD_ROOTS), config.WORK, config.REPO, tmp=config.tmp_root(), state=state.read(),
                         caches=janitor.caches(config.HOME, config.WARM, config.SCCACHE, config.CACHE, config.WORK), jev_act=config.JEV_ACT), args.dry_run) or ["nothing to tidy"]:
         print(line)
     return 0

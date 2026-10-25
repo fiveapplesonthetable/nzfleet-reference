@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-SCRIPT = Path(__file__).resolve().parents[3] / 'scripts/ci-warm-cache.py'
+SCRIPT = Path(__file__).resolve().parents[1] / 'runner/ci-warm-cache.py'
 SPEC = importlib.util.spec_from_file_location('ci_warm_cache', SCRIPT)
 cache = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(cache)
@@ -164,6 +164,15 @@ class WarmCache(unittest.TestCase):
         with patch.dict(os.environ, {'CI_SELF_HOSTED': 'nzela', 'CI_WARM_OVERRIDE': '/operator/cache'}):
             with self.assertRaisesRegex(ValueError, 'mode' if self.owner == 0 else 'owner UID'):
                 cache.mounted()
+
+    def test_the_pull_request_directory_docker_created_is_tightened_to_private(self):
+        if self.owner != 0:
+            self.skipTest('requires the pinned root job')
+        os.chmod(self.root, 0o755)
+        override = '/srv/fleet/nzela-pr/ci-cache/repo-42'
+        with patch.object(cache, 'MOUNT', self.root), patch.dict(os.environ, {'CI_SELF_HOSTED': '', 'CI_WARM_OVERRIDE': override}):
+            cache.mounted()
+        self.assertEqual(self.root.stat().st_mode & 0o777, 0o700)
 
 
 if __name__ == '__main__':

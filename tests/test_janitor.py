@@ -182,6 +182,53 @@ class BuildOutput(Machine):
         self.assertIn(f"could not tidy {stuck}: {stuck} is still there after trying to remove it", lines)
 
 
+class Temporaries(Machine):
+    def setUp(self):
+        super().setUp()
+        self.host.tmp = self.path("scratch")
+        self.host.state = {"agents": {"done": {"status": "finished"}, "live": {"status": "running"}}}
+        os.makedirs(self.host.tmp)
+
+    def test_what_a_finished_agent_left_goes_and_a_persons_file_in_the_root_stays(self):
+        old = self.make("scratch", "done", "old", hours_old=6)
+        self.make("scratch", "done", hours_old=6)
+        mine = self.make("scratch", "notes", hours_old=99)
+        janitor.run(self.host)
+        self.assertEqual((os.path.exists(old), os.path.exists(mine)), (False, True))
+
+    def test_a_running_agents_directory_is_never_emptied(self):
+        held = self.make("scratch", "live", "old", hours_old=99)
+        janitor.run(self.host)
+        self.assertTrue(os.path.exists(held))
+
+    def test_a_runner_directory_is_emptied_when_idle_and_kept_when_a_job_has_a_file_open(self):
+        idle = self.make("scratch", "runner-1", "job", hours_old=6)
+        busy = self.make("scratch", "runner-2", "job", hours_old=6)
+        self.process_holds(41, os.path.join(busy, "lib.so"))
+        janitor.run(self.host)
+        self.assertEqual((os.path.exists(idle), os.path.exists(busy)), (False, True))
+
+    def test_a_job_whose_tmpdir_is_the_runners_keeps_it(self):
+        busy = self.make("scratch", "runner-3", "job", hours_old=6)
+        self.process(42, TMPDIR=self.path("scratch", "runner-3"))
+        janitor.run(self.host)
+        self.assertTrue(os.path.exists(busy))
+
+    def test_a_library_a_jvm_unpacked_and_mapped_keeps_its_directory(self):
+        busy = self.make("scratch", "runner-4", "job", hours_old=6)
+        maps = os.path.join(self.make("proc", "43"), "maps")
+        with open(maps, "w") as f:
+            f.write(f"7f00-7f01 r-xp 0 00:00 1 {busy}/libnative.so\n")
+        janitor.run(self.host)
+        self.assertTrue(os.path.exists(busy))
+
+    def test_our_stale_leftovers_in_the_system_directory_go_by_prefix_and_others_stay(self):
+        ours = self.make("tmp", "nzela-e2e.abc", hours_old=6)
+        other = self.make("tmp", "somebody-else", hours_old=99)
+        janitor.run(self.host)
+        self.assertEqual((os.path.exists(ours), os.path.exists(other)), (False, True))
+
+
 class Containers(Machine):
     def test_an_old_idle_database_is_removed_and_a_connected_one_kept(self):
         self.docker.containers = {"agentdb-old": (3, 0, 5000), "agentdb-used": (3, 2, 5001), "unrelated": (9, 0, 6000)}

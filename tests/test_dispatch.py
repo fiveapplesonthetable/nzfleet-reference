@@ -28,10 +28,12 @@ class Dispatching(Fleet):
     def refused(self):
         return state.read()["refused"]
 
-    def test_a_managed_agent_uses_private_temporary_storage_in_its_fleet_home(self):
-        with mock.patch.object(config, "HOME", self.home):
+    def test_a_managed_agent_gets_its_own_temporary_directory_for_every_tool_that_ignores_tmpdir(self):
+        with mock.patch.object(config, "WORK", os.path.join(self.home, "work")):
             self.dispatch()
-        self.assertEqual(self.launched[0][1]["env"]["TMPDIR"], os.path.join(self.home, "tmp"))
+        env = self.launched[0][1]["env"]
+        mine = os.path.join(self.home, "tmp", "hands-1094")
+        self.assertEqual((env["TMPDIR"], env["JAVA_TOOL_OPTIONS"]), (mine, f"-Djava.io.tmpdir={mine}"))
 
     def test_a_merged_pr_is_never_dispatched(self):
         self.facts = dispatch.PullFacts("MERGED", HEAD, "nzf-branch", True, True)

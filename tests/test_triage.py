@@ -38,9 +38,9 @@ def typesafe(*choices, confidence=0.9, failing=None):
 
 class Scrubbing(unittest.TestCase):
     def test_paths_hosts_addresses_numbers_and_tokens_do_not_survive(self):
-        line = "error at /home/owner/work/nzela/src/main.rs:4 from api.example.com 10.0.0.7:5432 call +243 812 345 678 token=abc123def456"
+        line = "error at /home/user/work/nzela/src/main.rs:4 from api.example.com 10.0.0.7:5432 call +243 812 345 678 token=abc123def456"
         out = logtail.scrub(line)
-        for gone in ("/home/owner", "api.example.com", "10.0.0.7", "812 345", "abc123def456"):
+        for gone in ("/home/user", "api.example.com", "10.0.0.7", "812 345", "abc123def456"):
             self.assertNotIn(gone, out)
         self.assertIn("main.rs:4", out)
 

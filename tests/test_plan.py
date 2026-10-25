@@ -271,16 +271,17 @@ class Limits(unittest.TestCase):
         # A ci container has no user manager, where scoped() rightly leaves the command alone.
         with mock.patch("shutil.which", return_value="/usr/bin/systemd-run"), mock.patch.dict("os.environ", {"XDG_RUNTIME_DIR": "/run/user/1000"}):
             slices = {kind: next(a for a in machine.scoped(kind, ["x"]) if a.startswith("--slice=")) for kind in machine.LIMITS}
-        self.assertEqual(len(set(slices.values())), 2)
+        self.assertEqual(len(set(slices.values())), 3)
 
     def test_the_slice_quotas_and_the_runners_fit_in_the_machine(self):
         import os
         from pathlib import Path
         bin_ = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin")
         quota = lambda path: int(next(l for l in Path(bin_, path).read_text().splitlines() if l.startswith("CPUQuota=")).strip()[9:-1]) // 100
-        ci = quota("root/user-1001.slice.conf") + quota("root/user-1002.slice.conf")
-        self.assertLessEqual(ci + quota("root/user-1000.slice.conf") + 4, 72)
-        self.assertLessEqual(max(quota("nzfleet-batch.slice"), quota("nzfleet-agent.slice")), quota("root/user-1000.slice.conf"))
+        shared = max(quota("root/user-1000.slice.conf"), quota("root/user-1002.slice.conf"))
+        self.assertLessEqual(quota("root/user-1001.slice.conf") + shared + 4, 72)
+        self.assertLess(max(quota("nzfleet-batch.slice"), quota("nzfleet-agent.slice")), quota("root/user-1000.slice.conf"))
+        self.assertLessEqual(quota("nzfleet-background.slice"), quota("root/user-1000.slice.conf"))
 
     def test_agents_yield_the_cpu_to_batches_when_both_want_it(self):
         import os
@@ -607,4 +608,4 @@ class ChangesToHowChecksRunAreBatchedAlone(unittest.TestCase):
 
     def test_the_pipeline_files_are_recognised(self):
         self.assertTrue(plan.touches_ci([".github/workflows/ci.yaml"]))
-        self.assertFalse(plan.touches_ci(["scripts/new-migration.sh", "docs/ci-runners.md"]))
+        self.assertFalse(plan.touches_ci(["scripts/other-tool.sh", "docs/ci-runners.md"]))

@@ -58,8 +58,8 @@ class Setup(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
         os.makedirs(os.path.join(self.home, "platforms"))
-        os.makedirs(os.path.join(self.home, "nzela", "scripts"))
-        write(os.path.join(self.home, "nzela", "scripts", "install-sccache.sh"), "")
+        os.makedirs(os.path.join(self.home, "nzela", "tools", "nzfleet", "runner"))
+        write(os.path.join(self.home, "nzela", "tools", "nzfleet", "runner", "install-sccache.sh"), "")
 
     def go(self, tools=None):
         self.tools = tools or FakeTools()
@@ -92,7 +92,7 @@ class Setup(unittest.TestCase):
         self.out.clear()
         self.go()
         second = [c for c in self.tools.calls if c[:3] == ("systemctl", "--user", "daemon-reload")]
-        self.assertEqual((len(first), len(second), "installed" in "\n".join(self.out)), (1, 0, False))
+        self.assertEqual((len(first), len(second), "installed" in "\n".join(self.out)), (2, 0, False))
         self.assertIn("Machine tidy, including idle build output, runs through nzfleet every 15 minutes.", "\n".join(self.out))
 
     def test_a_changed_unit_is_refreshed(self):
@@ -132,7 +132,7 @@ class Setup(unittest.TestCase):
     def test_sccache_is_installed_by_the_repositorys_script_into_the_homes_bin(self):
         self.go()
         install = [c for c in self.tools.calls if c[0] == "sh"][0]
-        self.assertEqual(install[-2:], (os.path.join(self.home, "nzela", "scripts", "install-sccache.sh"),
+        self.assertEqual(install[-2:], (os.path.join(self.home, "nzela", "tools", "nzfleet", "runner", "install-sccache.sh"),
                                         os.path.join(config.HOME, "bin")))
 
     def test_an_sccache_that_cannot_be_installed_is_named_and_fails_setup(self):
@@ -146,6 +146,32 @@ class Setup(unittest.TestCase):
         self.assertIn("owner UID 1002", said)
         self.assertIn("configured CI_WARM_DIR takes precedence", said)
         self.assertFalse([c for c in self.tools.calls if c[0] == "sudo" or c[:2] == ("gh", "api")])
+
+    def runner_account(self, token=""):
+        os.makedirs(os.path.join(self.home, "actions-runner"))
+        hook = os.path.join(self.home, "nzela", "tools", "nzfleet", "runner", "runner-job-started.sh")
+        write(hook, "#!/bin/sh\n")
+        with mock.patch.dict(config.FILE, {"NZFLEET_MIRROR_TOKEN_FILE": token}):
+            return self.go()
+
+    def test_a_runner_account_gets_the_hook_and_the_mirror_it_refreshes_from_the_repository(self):
+        _, said = self.runner_account("/secrets/mirror")
+        self.assertEqual(read(os.path.join(self.home, "actions-runner", "job-started.sh")), "#!/bin/sh\n")
+        dropin = read(os.path.join(self.home, ".config", "systemd", "user", "nzela-runner@.service.d", "60-git-mirror.conf"))
+        self.assertIn("NZELA_GIT_MIRROR=%h/git-mirror/repo.git", dropin)
+        self.assertIn("NZELA_GIT_MIRROR_TOKEN_FILE=/secrets/mirror", dropin)
+        self.assertIn("job-started.sh; restart the runners", said)
+
+    def test_a_second_setup_leaves_the_hook_and_mirror_alone(self):
+        self.runner_account()
+        self.out.clear()
+        _, again = self.go()
+        self.assertNotIn("job-started.sh", again)
+
+    def test_an_account_without_runners_gets_no_hook(self):
+        write(os.path.join(self.home, "nzela", "tools", "nzfleet", "runner", "runner-job-started.sh"), "#!/bin/sh\n")
+        self.go()
+        self.assertFalse(os.path.exists(os.path.join(self.home, "actions-runner")))
 
     def test_the_root_crontab_is_printed_and_never_touched(self):
         _, said = self.go()

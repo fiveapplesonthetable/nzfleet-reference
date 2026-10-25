@@ -1,0 +1,6 @@
+[Unit]
+Description=The owner's standing background load: phone capture, Cuttlefish, headless Chrome
+
+[Slice]
+CPUQuota=400%
+CPUWeight=10

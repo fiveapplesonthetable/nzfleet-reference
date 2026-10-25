@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import shutil
 import tempfile
 import unittest
 from unittest import mock
@@ -39,7 +40,7 @@ class TheCpuLimitRefresh(unittest.TestCase):
                 mock.patch.object(config, "WORK", "/work"), \
                 mock.patch.object(config, "REPO", "/repo"), \
                 mock.patch.object(config, "TARGETS", "/targets"), \
-                mock.patch.object(machine, "free_gb", return_value=50), \
+                mock.patch.object(machine.shutil, "disk_usage", return_value=shutil._ntuple_diskusage(100 * 2**30, 50 * 2**30, 50 * 2**30)), \
                 mock.patch.object(machine.os, "getloadavg", return_value=(0.0, 0.0, 0.0)):
             self.assertEqual(tuple(row["mount"] for row in machine.reading(proc="/nonexistent")["disk"]), mounts)
 

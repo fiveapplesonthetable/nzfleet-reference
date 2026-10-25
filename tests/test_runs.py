@@ -2,7 +2,7 @@ import unittest
 
 from nzfleet import plan, runs
 
-WARNING = "Permission allow rule (/home/owner/.claude/settings.json): Write(x) is not matched by file permission checks\n"
+WARNING = "Permission allow rule (/home/user/.claude/settings.json): Write(x) is not matched by file permission checks\n"
 
 
 class Unfinished(unittest.TestCase):

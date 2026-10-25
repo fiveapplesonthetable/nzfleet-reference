@@ -16,6 +16,37 @@ def write(path, text):
         f.write(text)
 
 
+class BackgroundUnitsAreMovedByName(unittest.TestCase):
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.reloads = []
+        self.target = units.installed_dir(self.home)
+
+    def sync(self):
+        return units.sync_background(self.home, lambda: self.reloads.append(1))
+
+    def test_an_installed_capture_unit_gets_the_background_slice_and_systemd_reloads(self):
+        write(os.path.join(self.target, "phone-capture.service"), "[Service]\n")
+        self.assertEqual(self.sync(), ("phone-capture.service",))
+        with open(os.path.join(self.target, "phone-capture.service.d", units.BACKGROUND_DROPIN)) as f:
+            self.assertEqual((f.read(), self.reloads), ("[Service]\nSlice=nzfleet-background.slice\n", [1]))
+
+    def test_a_unit_that_is_not_installed_gets_nothing(self):
+        self.assertEqual((self.sync(), self.reloads, os.listdir(self.home)), ((), [], []))
+
+    def test_a_second_sync_changes_nothing(self):
+        write(os.path.join(self.target, "recordings-viewer.service"), "[Service]\n")
+        self.sync()
+        self.reloads.clear()
+        self.assertEqual((self.sync(), self.reloads), ((), []))
+
+    def test_sync_never_runs_a_restart(self):
+        write(os.path.join(self.target, "phone-capture.service"), "[Service]\n")
+        with mock.patch("subprocess.run") as run:
+            units.sync_background(self.home)
+        self.assertEqual([c.args[0][:3] for c in run.call_args_list], [["systemctl", "--user", "daemon-reload"]])
+
+
 class InstalledUnitsAreComparedWithTheShippedOnes(unittest.TestCase):
     def setUp(self):
         self.home, self.bin = tempfile.mkdtemp(), tempfile.mkdtemp()

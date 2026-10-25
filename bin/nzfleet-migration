@@ -1,0 +1,3 @@
+#!/bin/sh
+# Make a migration, or migrate the template database, without the fleet's dependencies.
+exec python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from nzfleet.migrations import main; sys.exit(main(sys.argv[2:]))' "$(dirname "$(dirname "$(readlink -f "$0")")")" "$@"

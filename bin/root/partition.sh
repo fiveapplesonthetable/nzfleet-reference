@@ -2,6 +2,7 @@
 # The root half of the CPU partition (docs/machine-partition.md).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
+tmp=${NZFLEET_TMP:-/srv/fleet/tmp}
 plan=$(python3 "$here/resource_budget.py" --emit-shell)
 eval "$plan"
 for uid in 1001 1002; do
@@ -18,5 +19,6 @@ systemctl set-property user-1000.slice "AllowedCPUs=$SHARED_CPUS"
 systemctl set-property user-1002.slice "AllowedCPUs=$SHARED_CPUS"
 for uid in 1001 1002; do
     account=$(getent passwd "$uid" | cut -d: -f1)
-    runuser -u "$account" -- python3 "$here/runner_shares.py" --uid "$uid" --slice-file "user-$uid.slice.conf"
+    install -d -o "$account" -m 700 "$tmp/$account"
+    runuser -u "$account" -- python3 "$here/runner_shares.py" --uid "$uid" --slice-file "user-$uid.slice.conf" --tmp-root "$tmp"
 done

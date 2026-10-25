@@ -55,7 +55,7 @@ class Notes(unittest.TestCase):
     def test_a_fix_brief_says_never_to_loosen_a_check_and_to_stop_when_the_cause_is_not_found(self):
         for key in ("fix-7", "main-1a2b3c4d", "hands-9~1"):
             text = agents.brief("repair it", key)
-            for part in ("Never lengthen a timeout", "raise a size budget", "stop without pushing", "scripts/no-loosened-limits.sh"):
+            for part in ("Never lengthen a timeout", "raise a size budget", "stop without pushing", "nzfleet-guard limits"):
                 self.assertIn(part, text, key)
 
     def test_a_brief_for_other_work_does_not_carry_the_fix_rules(self):

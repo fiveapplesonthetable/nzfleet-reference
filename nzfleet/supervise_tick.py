@@ -10,7 +10,7 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Callable
 
-from . import agents, config, jev, jev_points, machine, observe, owner_tick, progress, procs, runs, state, supervise, train, world
+from . import agents, config, jev, jev_points, machine, observe, owner_tick, progress, procs, rootdisk, runs, state, supervise, train, world
 
 INTERVAL = 3600
 DAY = 24 * 3600
@@ -38,6 +38,8 @@ class Host:
     load: Callable = machine.load
     cpu_percent: Callable = machine.cpu_percent
     free_gb: Callable = machine.free_gb
+    root_usage: Callable = machine.root_usage
+    prune_runner_volumes: Callable = machine.prune_runner_volumes
     comment: Callable = world.comment
     waits: Callable = observe.waits
     shadow: Callable = jev_points.shadow_jev
@@ -240,6 +242,19 @@ def _mail_green(tell: Callable) -> None:
         owner_tick.ready_set(order, {n: s["passed"][str(n)]["sha"] for n in order}, train.open_for(s["trains"], order), tell)
 
 
+def watch_root_disk(host: Host, event: Callable = lambda line: None) -> None:
+    """Frees finished runs' volumes while `/` is under 40 GB, and asks the owner to look while it is past the warning line."""
+    usage = host.root_usage()
+    if usage[1] < rootdisk.PRUNE_BELOW_GB:
+        event(host.prune_runner_volumes())
+    warning = rootdisk.warning(*usage)
+    with state.change() as st:
+        if warning:
+            st["needs_person"]["disk:root"] = warning
+        else:
+            st["needs_person"].pop("disk:root", None)
+
+
 def _guard(name: str, step: Callable, lines: list) -> None:
     try:
         step()
@@ -254,6 +269,7 @@ def hourly(host: Host, standing: Callable, tell: Callable, event: Callable) -> l
     _guard("duplicate batches", lambda: _stop_duplicate_batches(host, s, table, tell), lines)
     _guard("idle chains", lambda: lines.extend(_unblock_chains(host, state.read(), standing(state.read()), tell)), lines)
     _guard("green batches", lambda: _mail_green(tell), lines)
+    _guard("root disk", lambda: watch_root_disk(host, event), lines)
     _guard("health", lambda: lines.append(_health(host, standing)), lines)
     for line in lines:
         event(line)

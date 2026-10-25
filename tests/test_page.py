@@ -15,11 +15,11 @@ PLANTED = (
     (Path(__file__).parent / "testdata" / "planted-key.pem").read_text(),
     "token=hunter2hunter2",
     "Authorization: Bearer abcdefghijklmnop",
-    "/home/owner/secrets/gcs-project.json",
+    "/home/user/secrets/gcs-example.json",
     "~/.config/nzfleet/env",
     "/etc/nzela/status-token",
 )
-CREDENTIAL_SHAPES = re.compile(r"ghp_|github_pat_|sk-c|AKIA|BEGIN PRIVATE|MIIEv|hunter2|abcdefghijklmnop|gcs-project|\.config/nzfleet|status-token", re.I)
+CREDENTIAL_SHAPES = re.compile(r"ghp_|github_pat_|sk-c|AKIA|BEGIN PRIVATE|MIIEv|hunter2|abcdefghijklmnop|gcs-example|\.config/nzfleet|status-token", re.I)
 
 
 def leaky_shot():

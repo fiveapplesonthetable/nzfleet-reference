@@ -113,6 +113,28 @@ class Unpacks(unittest.TestCase):
         self.assertEqual(removed(snap), ["/tmp/robolectric1"])
 
 
+class Temporaries(unittest.TestCase):
+    OLD = 5 * HOUR
+
+    def test_files_untouched_for_hours_go(self):
+        self.assertEqual(removed(Snapshot(temps=(Tree("/t/app/x", self.OLD),))), ["/t/app/x"])
+
+    def test_files_touched_within_the_window_stay(self):
+        self.assertEqual(removed(Snapshot(temps=(Tree("/t/app/x", 3 * HOUR),))), [])
+
+    def test_files_a_live_process_has_open_stay_however_old(self):
+        snap = Snapshot(temps=(Tree("/t/app/x", self.OLD),), held_paths=frozenset({"/t/app/x/lib.so"}))
+        self.assertEqual(removed(snap), [])
+
+    def test_a_directory_a_live_process_names_as_its_tmpdir_stays(self):
+        snap = Snapshot(temps=(Tree("/t/app/x", self.OLD),), scratch=frozenset({"/t/app"}))
+        self.assertEqual(removed(snap), [])
+
+    def test_robolectric_files_in_use_stay_past_a_day(self):
+        snap = Snapshot(unpacks=(Tree("/tmp/robolectric1", 30 * HOUR),), held_paths=frozenset({"/tmp/robolectric1/a.jar"}))
+        self.assertEqual(removed(snap), [])
+
+
 class Schedule(unittest.TestCase):
     def test_it_is_due_every_fifteen_minutes(self):
         self.assertFalse(tidy.due(1000, 1000 + 14 * 60))

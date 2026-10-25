@@ -45,24 +45,8 @@ class Runs(unittest.TestCase):
         main.start()
         self.addCleanup(main.stop)
 
-    def test_area_classification_reads_HEAD_when_upstream_main_is_absent(self):
-        with tempfile.TemporaryDirectory() as repo:
-            subprocess.run(["git", "init", "-q", "-b", "fixture", repo], check=True)
-            subprocess.run(["git", "-C", repo, "config", "user.name", "fixture"], check=True)
-            subprocess.run(["git", "-C", repo, "config", "user.email", "fixture@example.test"], check=True)
-            scripts = os.path.join(repo, "scripts")
-            os.makedirs(scripts)
-            source = os.path.join(os.path.dirname(__file__), "..", "..", "..", "scripts", "changed-areas.sh")
-            shutil.copyfile(os.path.abspath(source), os.path.join(scripts, "changed-areas.sh"))
-            subprocess.run(["git", "-C", repo, "add", "scripts/changed-areas.sh"], check=True)
-            subprocess.run(["git", "-C", repo, "commit", "-qm", "fixture"], check=True)
-            missing_ref = subprocess.run(
-                ["git", "-C", repo, "show-ref", "--verify", "--quiet", "refs/remotes/upstream/main"]
-            )
-            self.assertNotEqual(missing_ref.returncode, 0)
-
-            with mock.patch.object(world, "REPO", repo):
-                self.assertEqual(world.areas([".github/workflows/fuzz.yaml"]), frozenset({"secrets", "deploy"}))
+    def test_a_batch_classifies_areas_with_the_fleets_own_rules_and_needs_no_checkout_of_main(self):
+        self.assertEqual(world.areas([".github/workflows/fuzz.yaml"]), frozenset({"secrets", "deploy"}))
 
     def test_a_batch_ends_after_its_wall_clock_however_many_rounds_remain(self):
         clock = iter((0, 8 * 3600, 8 * 3600 + 1))

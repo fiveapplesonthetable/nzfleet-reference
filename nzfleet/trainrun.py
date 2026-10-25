@@ -106,7 +106,7 @@ def _queue(items: list) -> None:
 def _last_ci_change() -> str:
     """The newest commit on main that touched the workflows or the check scripts, or ''."""
     return world.git("log", "-1", "--format=%H", world.MAIN, "--", ".github/workflows", "scripts/checks.sh",
-                     "scripts/areas", "scripts/changed-areas.sh").strip()
+                     "scripts/areas", "tools/nzfleet/nzfleet/selection").strip()
 
 
 def run(numbers: list, generators: dict, limit: int = 0, say=print) -> int:

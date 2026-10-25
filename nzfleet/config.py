@@ -7,6 +7,8 @@ import os
 import re
 import stat
 
+from . import tmpdirs
+
 
 FILE: dict = {}  # what the env file says, including values the environment overrode
 _ENVIRONMENT = frozenset(os.environ)
@@ -164,19 +166,38 @@ def _get(name: str, default: str = "") -> str:
 HOME = _get("NZFLEET_HOME", os.path.expanduser("~/.nzfleet"))  # state, logs, runs and agent output
 
 
+def tmp_root() -> str:
+    """Where this installation's temporary files live: NZFLEET_TMP, else `tmp` beside the scratch worktrees, which are on the data disk."""
+    return os.path.abspath(_get("NZFLEET_TMP") or os.path.join(os.path.dirname(WORK), "tmp"))
+
+
 def private_tmpdir() -> str:
-    """Returns a private temporary directory owned by this fleet installation."""
-    path = os.path.abspath(os.path.join(HOME, "tmp"))
+    """Returns the temporary directory this installation owns; it is never writable by others, so what is made inside it is ours."""
+    path = tmp_root()
     os.makedirs(path, mode=0o700, exist_ok=True)
     info = os.stat(path, follow_symlinks=False)
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o002:
         raise OSError(f"fleet temporary directory is not private: {path}")
     return path
 
 
+def scratch_environment(directory: str, env: dict | None = None) -> dict:
+    """`env` with every temporary-file setting that ignores TMPDIR pointed at `directory` too."""
+    return tmpdirs.environment(directory, os.environ if env is None else env)
+
+
 def with_private_tmpdir(env: dict | None = None) -> dict:
     """Gives a child process the fleet's private temporary directory."""
-    return {**(os.environ if env is None else env), "TMPDIR": private_tmpdir()}
+    return scratch_environment(private_tmpdir(), env)
+
+
+def with_agent_tmpdir(key: str, env: dict | None = None) -> dict:
+    """Gives an agent a temporary directory of its own under the fleet's, so what it leaves can be told from another's."""
+    directory = tmpdirs.agent_directory(private_tmpdir(), key)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    return scratch_environment(directory, env)
+
+
 REPO = _get("NZFLEET_REPO", os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 WORK = _get("NZFLEET_WORK", os.path.join(os.path.dirname(REPO), "work"))  # scratch worktrees
 UPSTREAM = _get("NZFLEET_UPSTREAM", "nzela-org/nzela")

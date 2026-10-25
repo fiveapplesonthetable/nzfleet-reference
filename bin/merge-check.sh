@@ -207,7 +207,7 @@ ln -sfn "$target" target
 echo "sdk.dir=$ANDROID_HOME" >frontend/android/local.properties
 
 sccache=${NZFLEET_SCCACHE-$home/sccache} sccache_bin=""
-[ -z "$sccache" ] || [ ! -x scripts/install-sccache.sh ] || sccache_bin=$(scripts/install-sccache.sh "$home/bin")
+[ -z "$sccache" ] || [ ! -x tools/nzfleet/runner/install-sccache.sh ] || sccache_bin=$(tools/nzfleet/runner/install-sccache.sh "$home/bin")
 
 # The workflow is the merged tree's own, so a PR that changes a job is checked by the job it wrote.
 python3 -c 'import os; cpus = sorted(os.sched_getaffinity(0)); print(f"area CPU affinity: {len(cpus)} CPUs ({cpus})")'
@@ -217,5 +217,5 @@ PYTHONPATH=$fleet python3 -m nzfleet.areas --workflow .github/workflows/ci.yaml 
     --sccache "$sccache" --sccache-bin "$sccache_bin" --stats "$run/stats.json" ${areas//,/ }
 rc=$?
 # Only checks.sh's closing line: a test that prints "failed: <name>" must not stand in for it.
-line=$(PYTHONPATH=$fleet python3 -m nzfleet summary-line "$run/log" $(scripts/changed-areas.sh all) ${areas//,/ })
+line=$(PYTHONPATH=$fleet python3 -m nzfleet summary-line "$run/log" $("$fleet/bin/nzfleet-select" areas all) ${areas//,/ })
 result "$rc" "$merged" "$skipped" "$line" "$tree"

@@ -134,11 +134,11 @@ class ChangesToHowChecksRun(unittest.TestCase):
         self.assertEqual([c.number for c in got], [2])
 
     def test_each_pipeline_file_counts(self):
-        for path in (".github/workflows/ci.yaml", "scripts/checks.sh", "scripts/areas/rust.sh", "scripts/changed-areas.sh"):
+        for path in (".github/workflows/ci.yaml", "scripts/checks.sh", "scripts/areas/rust.sh", "tools/nzfleet/nzfleet/selection/areas.py"):
             self.assertEqual([c.number for c in trainpr.solo_ci([pr(1, "a.rs"), pr(2, path)])], [2], path)
 
     def test_other_scripts_do_not_make_a_train_solo(self):
-        got = trainpr.solo_ci([pr(1, "scripts/new-migration.sh"), pr(2, "crates/a.rs")])
+        got = trainpr.solo_ci([pr(1, "scripts/other-tool.sh"), pr(2, "crates/a.rs")])
         self.assertEqual([c.number for c in got], [1, 2])
 
     def test_nothing_lands_until_a_main_run_has_passed_after_the_change(self):

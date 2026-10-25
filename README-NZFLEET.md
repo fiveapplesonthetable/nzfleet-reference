@@ -54,7 +54,7 @@ It merges only through `nzfleet land`, which the owner runs; it never applies Te
 
 ## Warm slots
 
-A green batch posts only `nzfleet/merge-check`. What main reuses is a pull request run's own `ci-proof` artifact (`scripts/ci-proof.py`), which needs no login or variable of ours.
+A green batch posts only `nzfleet/merge-check`. What main reuses is a pull request run's own `ci-proof` artifact (`nzfleet/selection/proof.py`), which needs no login or variable of ours.
 
 A batch does not build from nothing. `bin/merge-check.sh` takes one of `NZFLEET_WARM_SLOTS` (three) slots under `$NZFLEET_HOME/warm`, holding a lock on it for the batch: a worktree and a build directory that the previous batch left. The worktree is reset to main and the pull requests merged onto it, so git rewrites only the files that differ, cargo's modification times stay right, and cargo, Gradle and npm compile and install what changed. Rust runs with incremental compilation there; `scripts/checks.sh` touches the workspace's own sources first so every query is checked against this batch's schema again. A batch that finds every slot held for `NZFLEET_WARM_WAIT` seconds builds in a fresh worktree as it used to. `NZFLEET_WARM=` (empty) turns slots off. A new Rust toolchain, or a build directory over `NZFLEET_WARM_MAX_GB`, empties it.
 
@@ -69,7 +69,7 @@ A batch does not build from nothing. `bin/merge-check.sh` takes one of `NZFLEET_
 runners; run again it changes nothing. A warm batch shows in its log as `warm: <slot>` and in each area's `stats:` line
 as sccache hits against misses; `warm: no slot, building cold` means every slot was held.
 
-Dependencies from a registry are compiled through one sccache in `$NZFLEET_HOME/sccache`, shared by every slot and area (`scripts/rustc-wrapper.sh`, `scripts/install-sccache.sh`), and npm reads its tarballs from `$NZFLEET_HOME/cache/npm`. Each area ends with a `stats:` line, and `result.json` and the batch in `state.json` carry the same figures: wall seconds, CPU seconds read from the cgroups, and sccache hits and misses.
+Dependencies from a registry are compiled through one sccache in `$NZFLEET_HOME/sccache`, shared by every slot and area (`scripts/rustc-wrapper.sh`, `tools/nzfleet/runner/install-sccache.sh`), and npm reads its tarballs from `$NZFLEET_HOME/cache/npm`. Each area ends with a `stats:` line, and `result.json` and the batch in `state.json` carry the same figures: wall seconds, CPU seconds read from the cgroups, and sccache hits and misses.
 
 ## Files
 
@@ -95,7 +95,7 @@ Every Claude agent nzfleet launches gets `--settings` with a PreToolUse hook (`h
 2. It writes `~/.config/nzfleet/env` from `bin/env.template`, once. Fill in what is commented out; each variable is explained there, and the file holds paths and names, never secrets (the deployer's key is a file whose path goes in `NZFLEET_GCP_KEY`).
 3. It makes the daemon's detached worktree of main, installs and enables `nzfleet.service` and the watchdog timer, and links `nzfleet`, `agent-db`, `gradle-slot` and the nzfleet skill into the user's directories.
 4. It lists what is missing: docker, rustup 1.98, node 22, the Android SDK, gcloud, `gh auth login`, and the phones' adb host. Fix, run it again, until it lists nothing.
-5. As root, once, it only prints: `sudo install -m 755 scripts/runner-prune.sh /usr/local/sbin/nzela-runner-prune`, the locked, ten-minute root cron line for the low-disk check, and the sudoers rule that lets nzfleet run `nzela-runner-prune check`. Check the rule with `visudo -cf` before installing it.
+5. As root, once, it only prints: `sudo install -m 755 tools/nzfleet/runner/runner-prune.sh /usr/local/sbin/nzela-runner-prune`, the locked, ten-minute root cron line for the low-disk check, and the sudoers rule that lets nzfleet run `nzela-runner-prune check`. Check the rule with `visudo -cf` before installing it.
 
 No user crontab entry is needed: the daemon does the janitor's work. `notify.py` (the owner's mail) stays machine-local; `NZFLEET_NOTIFY` names it.
 

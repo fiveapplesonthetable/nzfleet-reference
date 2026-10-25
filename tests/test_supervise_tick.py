@@ -24,7 +24,7 @@ class Supervised(Fleet):
         self.comments = []
         self.host = Host(now=lambda: self.clock, processes=lambda: self.table, activity=lambda path, base: self.acts.get(path, QUIET),
                          alive=lambda pid: pid in self.live, kill=self.killed.append, kill_group=self.groups.append,
-                         comment=lambda n, body: self.comments.append((n, body)), busy=lambda: False, load=lambda: 5.0, cpu_percent=lambda: 40.0, free_gb=lambda: 200)
+                         comment=lambda n, body: self.comments.append((n, body)), busy=lambda: False, load=lambda: 5.0, cpu_percent=lambda: 40.0, free_gb=lambda: 200, root_usage=lambda: (10, 200))
 
     def run_agent(self, key="app-data", cpu=0.0):
         self.start(key)

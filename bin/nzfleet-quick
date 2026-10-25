@@ -1,0 +1,3 @@
+#!/bin/sh
+# The local test loop: warm servers, and the tests an edit can affect.
+exec python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from nzfleet.devloop.quick import main; sys.exit(main(["nzfleet-quick", *sys.argv[2:]]))' "$(dirname "$(dirname "$(readlink -f "$0")")")" "$@"

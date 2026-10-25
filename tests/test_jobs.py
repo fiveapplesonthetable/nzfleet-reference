@@ -1,3 +1,4 @@
+import glob
 import os
 import re
 import shlex
@@ -62,7 +63,7 @@ class WhereCiRunsEachArea(unittest.TestCase):
     def test_rust_checks_run_the_tests_with_a_pinned_nextest_binary(self):
         check_steps = [step.get("run", "") for step in WORKFLOW["jobs"]["check"]["steps"]]
         self.assertFalse(any("cargo install cargo-nextest" in step for step in check_steps))
-        self.assertTrue(any("scripts/install-nextest.sh" in step for step in check_steps))
+        self.assertTrue(any("tools/nzfleet/runner/install-nextest.sh" in step for step in check_steps))
         self.assertNotIn("rust_tests", WORKFLOW["jobs"])
         self.assertFalse(any(step.get("uses", "").startswith("actions/upload-artifact") for step in WORKFLOW["jobs"]["check"]["steps"]))
 
@@ -95,6 +96,69 @@ class WhereCiRunsEachArea(unittest.TestCase):
         self.assertEqual(console.steps[-1], "../../scripts/checks.sh console")
 
 
+class TheBaseIsFetchedShallow(unittest.TestCase):
+    """Every job but `select` holds the base commit and nothing behind it, so nothing it runs may need a merge base."""
+
+    HISTORY = re.compile(r"git\b.*\b(diff|log|rev-list|merge-base)\b")
+    THREE_DOT = re.compile(r'[\w"}\)]\.\.\.[\w"$\{]')
+    # Reads NZELA_BASE only when CEILING_BASE is unset, and takes CEILING_BASE itself as the base otherwise.
+    GUARDED = {"crate-ceilings.sh"}
+
+    def fetches(self):
+        for name, spec in WORKFLOW["jobs"].items():
+            for step in spec.get("steps", []):
+                if step.get("name") == plan.FETCH_BASE_STEP:
+                    yield name, step["run"]
+
+    def test_every_job_fetches_the_base_at_depth_one(self):
+        found = list(self.fetches())
+        self.assertGreater(len(found), 10)
+        for name, run in found:
+            self.assertEqual(run, 'git fetch --no-tags --depth=1 origin "$NZELA_BASE"', name)
+
+    def test_no_check_outside_select_diffs_against_the_base_with_three_dots(self):
+        sources = [os.path.join(ROOT, "scripts", "*.sh"), os.path.join(ROOT, "scripts", "*.py"),
+                   os.path.join(ROOT, "scripts", "areas", "*.sh")]
+        offenders = []
+        for path in sorted(p for pattern in sources for p in glob.glob(pattern)):
+            if os.path.basename(path) in self.GUARDED or path.endswith("-test.sh"):
+                continue
+            with open(path) as source:
+                for number, line in enumerate(source, 1):
+                    if line.lstrip().startswith("#") or "--is-ancestor" in line:
+                        continue
+                    if self.HISTORY.search(line) and (self.THREE_DOT.search(line) or "merge-base" in line):
+                        offenders.append(f"{os.path.relpath(path, ROOT)}:{number}: {line.strip()}")
+        self.assertEqual(offenders, [])
+
+    def test_the_detector_sees_a_three_dot_diff(self):
+        line = 'git diff --name-only "$NZELA_BASE"...HEAD'
+        self.assertTrue(self.HISTORY.search(line) and self.THREE_DOT.search(line))
+
+    def test_a_two_tree_diff_against_a_depth_one_pair_needs_no_merge_base(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, job = os.path.join(tmp, "origin"), os.path.join(tmp, "job")
+            env = {"PATH": os.environ["PATH"], "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                   "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+
+            def git(where, *args):
+                return subprocess.run(["git", "-C", where, *args], env=env, capture_output=True, text=True)
+
+            subprocess.run(["git", "init", "-q", "-b", "main", origin], env=env, check=True)
+            for n in ("one", "two", "three"):
+                with open(os.path.join(origin, n), "w") as f:
+                    f.write(n)
+                git(origin, "add", "-A")
+                git(origin, "commit", "-qm", n)
+            base, head = git(origin, "rev-parse", "HEAD~2").stdout.strip(), git(origin, "rev-parse", "HEAD").stdout.strip()
+            subprocess.run(["git", "init", "-q", job], env=env, check=True)
+            for sha in (head, base):
+                git(job, "fetch", "-q", "--no-tags", "--depth=1", "file://" + origin, sha)
+            git(job, "checkout", "-q", "--detach", head)
+            self.assertEqual(git(job, "diff", "--name-only", base, "HEAD").stdout.split(), ["three", "two"])
+            self.assertNotEqual(git(job, "diff", "--name-only", f"{base}...HEAD").returncode, 0)
+
+
 class WhatCiSetsUp(unittest.TestCase):
     def test_the_rust_areas_get_their_own_postgres_by_the_name_ci_gives_it(self):
         for area in ("rust", "compat", "fuzz", "e2e"):
@@ -113,7 +177,7 @@ class WhatCiSetsUp(unittest.TestCase):
         self.assertIn(("-c", "max_connections=300"), list(zip(command, command[1:])))
 
     def test_pre_push_postgres_command_has_the_bounded_connection_budget(self):
-        with open(os.path.join(ROOT, "scripts", "pre-push-db.sh")) as source:
+        with open(os.path.join(ROOT, "tools", "nzfleet", "bin", "pre-push-db.sh")) as source:
             script = source.read()
         command = re.search(r"(?ms)^docker run -d .*?^\s+postgres:16 (.*?) >/dev/null$", script)
         self.assertIsNotNone(command)
@@ -317,8 +381,28 @@ class TheCommands(unittest.TestCase):
             argv = plan.job_argv(current, "n", "net", {"/owned/warm": "/warm"}, "/w", "1000:1000", {})
             self.assertEqual(argv.count("/owned/warm:/warm"), 1)
             self.assertIn("/warm", argv[argv.index("-c") + 1])
-            self.assertIn("export CI_WARM_OVERRIDE=native-cache\nexport CI_SELF_HOSTED=native\npython3 scripts/ci-warm-cache.py mounted", argv)
+            self.assertIn("export CI_WARM_OVERRIDE=native-cache\nexport CI_SELF_HOSTED=native\npython3 tools/nzfleet/runner/ci-warm-cache.py mounted", argv)
             self.assertNotIn("${{", " ".join(argv))
+
+    def test_every_job_that_mounts_warm_reads_the_same_pull_request_setting(self):
+        warm_jobs = {name: spec for name, spec in WORKFLOW["jobs"].items()
+                     if any(str(v).endswith(":/warm") for v in (spec.get("container") or {}).get("volumes") or [])}
+        self.assertGreaterEqual(len(warm_jobs), 4)
+        volumes, overrides, slots = set(), set(), set()
+        for name, spec in warm_jobs.items():
+            volumes.update(spec["container"]["volumes"])
+            overrides.update(str(s["env"]["CI_WARM_OVERRIDE"]) for s in spec["steps"] if s.get("name") == "Verify warm cache mount")
+            if "NZELA_WARM_SLOTS" in (spec.get("env") or {}):
+                slots.add(str(spec["env"]["NZELA_WARM_SLOTS"]))
+        self.assertEqual(len(volumes), 1, volumes)
+        self.assertEqual(len(overrides), 1, overrides)
+        self.assertEqual(len(slots), 1, slots)
+        self.assertIn("vars.CI_PR_WARM_DIR", next(iter(volumes)))
+        self.assertIn("vars.CI_PR_WARM_DIR", next(iter(overrides)))
+        for text in (next(iter(volumes)), next(iter(overrides))):
+            self.assertIn("vars.CI_PR_WARM_DIR || format('/srv/fleet/nzela-pr/ci-cache/repo-{0}', github.repository_id)", text)
+            self.assertNotIn("nzela-warm", text)
+        self.assertIn("github.event_name == 'pull_request' && '5' || '1'", next(iter(slots)))
 
     def test_a_batch_runs_the_whole_rust_or_fuzz_area_not_one_lane_of_it(self):
         for area in ("rust", "fuzz"):

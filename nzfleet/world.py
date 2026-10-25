@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 import datetime
 
 from . import dispatch
+from .selection import areas as selection
 from .config import FORK, OWNER, REPO, UPSTREAM
 
 
@@ -126,11 +127,8 @@ def changed_files(sha: str) -> list:
 
 def areas(files: list, tier: str = "change") -> frozenset:
     """The areas `files` call for in `tier`: `change` for one pull request, `train` for the merged tree of several."""
-    script = git("show", f"{MAIN}:scripts/changed-areas.sh")
-    # Main's copy may still pipe into grep -q under pipefail, which drops areas on a long list (#839).
-    script = script.replace("set -uo pipefail", "set -u")
-    out = run("bash", "-c", script, "changed-areas", tier, input="\n".join(files))
-    return frozenset(out.split())
+    found, _ = selection.select(files, tier)
+    return frozenset(found)
 
 
 def worktree_branches_between(start: float, end: float) -> list:

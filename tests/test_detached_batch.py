@@ -11,6 +11,7 @@ from nzfleet import batch, cli, config, janitor, machine, state, tick
 class SpawnedBatch(unittest.TestCase):
     def spawn(self, bid="manual-1"):
         with tempfile.TemporaryDirectory() as home, mock.patch.object(state, "HOME", home), mock.patch.object(config, "HOME", home), \
+                mock.patch.object(config, "WORK", os.path.join(home, "work")), \
                 mock.patch.object(machine, "scoped", side_effect=lambda kind, argv: argv), \
                 mock.patch.dict(config.FILE, {"NZFLEET_REPO": "/from/the/file"}), \
                 mock.patch.dict(os.environ, {"NZFLEET_REPO": "/from/this/shell"}), \
@@ -29,7 +30,7 @@ class SpawnedBatch(unittest.TestCase):
         call, _ = self.spawn()
         self.assertEqual(call.kwargs["env"]["NZFLEET_REPO"], "/from/the/file")
 
-    def test_a_batch_gets_private_temporary_storage_inside_the_fleet_home(self):
+    def test_a_batch_gets_private_temporary_storage_beside_the_scratch_worktrees(self):
         call, log = self.spawn()
         self.assertEqual(call.kwargs["env"]["TMPDIR"], os.path.join(os.path.dirname(os.path.dirname(log)), "tmp"))
 

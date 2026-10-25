@@ -7,6 +7,7 @@ import unittest
 from unittest import mock
 
 from nzfleet import plan, trainpr, world
+from nzfleet.selection import areas as selection
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 APP = "frontend/android/app/src/main/java/app/nzela/ui/amount/AmountContent.kt"
@@ -14,15 +15,13 @@ CONSOLE = "frontend/admin/src/screens/Senders.tsx"
 ANDROID_SHOT = "frontend/android/docs/screenshots/amount.png"
 CONSOLE_SHOT = "frontend/admin/screenshots/02-dashboard.png"
 FORMAL = "formal/kani/run.sh"
-SERVER = "crates/nzela-platform/src/provider/mod.rs"
-APP_ROUTE = "crates/nzela-platform/src/api/quote.rs"
+SERVER = "crates/nzela-providers/src/lib.rs"
+APP_ROUTE = "crates/nzela-api/src/quote.rs"
 CONSOLE_ROUTE = "crates/nzela-operator-boards/src/reads/home.rs"
 
 
 def selected(*files, tier="train"):
-    script = os.path.join(ROOT, "scripts", "changed-areas.sh")
-    out = subprocess.run(["bash", script, tier], input="\n".join(files), capture_output=True, text=True, check=True)
-    return frozenset(out.stdout.split())
+    return frozenset(selection.select(list(files), tier)[0])
 
 
 def required(*files):
@@ -74,7 +73,7 @@ class ATrainRunsAClientOnlyForWhatItReads(unittest.TestCase):
         self.assertFalse({"android", "console"} & required(".github/workflows/shots.yaml"))
 
     def test_the_planner_and_the_script_read_the_same_inputs(self):
-        for file in (APP, CONSOLE, APP_ROUTE, CONSOLE_ROUTE, SERVER, "scripts/contract.sh", "crates/nzela-platform/src/notify/mod.rs"):
+        for file in (APP, CONSOLE, APP_ROUTE, CONSOLE_ROUTE, SERVER, "scripts/contract.sh", "crates/nzela-api/src/notice.rs"):
             asked = {a for a in ("android", "console") if plan.TRAIN_INPUTS[a].search(file)}
             self.assertEqual(asked, selected(file) & {"android", "console"}, file)
 
@@ -123,20 +122,20 @@ class ATrainRequiresWhatItRuns(unittest.TestCase):
 class ATrainDoesNotRunEverythingForOnePathItCannotPlace(unittest.TestCase):
     PATH = "tools/mystery/run.sh"
 
-    def run_script(self, tier):
-        script = os.path.join(ROOT, "scripts", "changed-areas.sh")
-        return subprocess.run(["bash", script, tier], input=self.PATH, capture_output=True, text=True, check=True)
-
     def test_a_train_adds_deploy_and_runs_neither_client_suite(self):
-        got = frozenset(self.run_script("train").stdout.split())
+        got = frozenset(selection.select([self.PATH], "train")[0])
         self.assertTrue({"deploy", "rust", "e2e"} <= got)
-        self.assertFalse({"android", "console", "console-crawl", "image"} & got)
+        self.assertFalse({"android", "console", "image"} & got)
 
     def test_a_train_names_the_path_it_could_not_place(self):
-        self.assertIn(self.PATH, self.run_script("train").stderr)
+        self.assertEqual(selection.select([self.PATH], "train")[1], (self.PATH,))
 
-    def test_a_single_change_still_runs_every_area(self):
-        self.assertIn("android", self.run_script("change").stdout.split())
+    def test_a_single_change_to_an_unplaced_path_runs_deploy_and_not_every_area(self):
+        self.assertEqual(frozenset(selection.select([self.PATH], "change")[0]), {"secrets", "deploy"})
+
+    def test_a_single_change_to_an_unplaced_script_runs_every_area(self):
+        self.assertIn("android", selection.select(["scripts/nobody-placed-this.sh"], "change")[0])
+
 
 if __name__ == "__main__":
     unittest.main()

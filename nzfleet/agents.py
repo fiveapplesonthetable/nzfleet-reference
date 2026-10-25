@@ -32,7 +32,7 @@ FIX_KEYS = ("fix-", "main-", "hands-")
 FIX_RULES = ("Rules from the owner for this run. A red check is red for a reason: find it and fix it. Never lengthen a timeout, "
              "add a retry, force serial mode or raise a size budget to make a check pass; a pull request that only does that "
              "is wrong, and two were opened that way on 2026-10-09 (#1036, #1042). If you cannot find the cause, report what "
-             "you found and stop without pushing. Before every push run `scripts/no-loosened-limits.sh`; it refuses such a diff.")
+             "you found and stop without pushing. Before every push run `tools/nzfleet/bin/nzfleet-guard limits`; it refuses such a diff.")
 
 
 def brief(task: str, key: str = "") -> str:
@@ -110,7 +110,7 @@ def start(key: str, task: str, model: str = "sonnet", dry_run: bool = False, are
             proc = subprocess.Popen(
                 machine.scoped("agent", ["timeout", str(LIMIT), *argv], unit=unit),
                 cwd=REPO, stdout=output, stderr=subprocess.STDOUT, start_new_session=True,
-                env={**config.with_private_tmpdir(), "NZFLEET_AGENT_KEY": runs.base_key(key)})
+                env={**config.with_agent_tmpdir(runs.base_key(key)), "NZFLEET_AGENT_KEY": runs.base_key(key)})
         agents[key] = {"status": "running", "pid": proc.pid, "task": task, "provider": provider,
                        "provider_selection": selected_provider, "model": selected_model, "log": log, "started": started, "unit": unit,
                        "process_start": _process_start(proc.pid),

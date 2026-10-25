@@ -13,7 +13,7 @@ import tarfile
 import time
 from dataclasses import dataclass, field
 
-from . import config, disktriage, jev, procs, tidy
+from . import config, disktriage, jev, procs, runs, tidy, tmpdirs
 
 DATABASE_PORT = re.compile(r"@[^/:]+:(\d+)/")
 PUBLISHED_PORT = re.compile(r":(\d+)->5432/tcp")
@@ -37,6 +37,7 @@ class Host:
     work: str                     # directories of agent worktrees
     repo: str                     # the checkout that owns those worktrees
     unpacks: str = "/tmp"
+    tmp: str = ""                 # the fleet's temporary root, whose agent and runner directories are ours to empty
     proc: str = "/proc"
     run: object = run_tool
     run_bytes: object = run_tool_bytes
@@ -75,9 +76,32 @@ def _children(base: str) -> list:
         return []
 
 
-def live_processes(proc: str) -> tuple:
-    """Paths and arguments held by running processes, and their database ports."""
-    paths, args, ports = set(), set(), set()
+def _mapped(entry: str, roots: tuple) -> set:
+    """Files under `roots` a process has mapped; a JVM keeps using a library it unpacked hours ago without holding it open."""
+    found = set()
+    try:
+        with open(os.path.join(entry, "maps"), errors="replace") as maps:
+            for line in maps:
+                fields = line.split(None, 5)
+                path = fields[5].strip().removesuffix(" (deleted)") if len(fields) == 6 else ""
+                if path.startswith(roots):
+                    found.add(path)
+    except OSError:
+        pass
+    return found
+
+
+def _entries(base: str) -> list:
+    """Everything directly in `base` that is not a link: files too, which a build leaves beside its directories."""
+    try:
+        return sorted(e.path for e in os.scandir(base) if not e.is_symlink())
+    except OSError:
+        return []
+
+
+def live_processes(proc: str, tmp: tuple = ()) -> tuple:
+    """Paths and arguments held by running processes, their database ports, and the temporary directories under `tmp` they were given."""
+    paths, args, ports, scratch = set(), set(), set(), set()
     for entry in _children(proc):
         if not os.path.basename(entry).isdigit():
             continue
@@ -90,6 +114,10 @@ def live_processes(proc: str) -> tuple:
                 env = dict(item.partition(b"=")[::2] for item in f.read().split(b"\0") if item)
         except OSError:
             env = {}
+        given = env.get(b"TMPDIR", b"").decode(errors="replace")
+        if given and any(given.startswith(root.rstrip("/") + "/") for root in tmp):
+            scratch.add(given)
+        paths |= _mapped(entry, tmp)
         if env.get(b"CARGO_TARGET_DIR"):
             paths.add(env[b"CARGO_TARGET_DIR"].decode(errors="replace"))
         found = DATABASE_PORT.search(env.get(b"DATABASE_URL", b"").decode(errors="replace"))
@@ -112,7 +140,28 @@ def live_processes(proc: str) -> tuple:
                 args.update(part.decode(errors="replace") for part in f.read().split(b"\0") if part)
         except OSError:
             pass
-    return frozenset(paths), tuple(args), frozenset(ports)
+    return frozenset(paths), tuple(args), frozenset(ports), frozenset(scratch)
+
+
+def _ours(path: str) -> bool:
+    try:
+        return os.lstat(path).st_uid == os.getuid()
+    except OSError:
+        return False
+
+
+def _temps(host: Host, now: float) -> tuple:
+    """Our leftovers: known prefixes in the system directory, and everything inside the directory of a task that is not running
+    or of a CI runner. Anything else under the fleet's root is a person's and is never listed."""
+    running = {runs.base_key(k) for k, a in host.state.get("agents", {}).items() if a.get("status") == "running"}
+    known = {tmpdirs.agent_directory(host.tmp, runs.base_key(k)) for k in host.state.get("agents", {})} - {
+        tmpdirs.agent_directory(host.tmp, k) for k in running}
+    found = [p for p in _children(host.unpacks) if tmpdirs.system_leftover(os.path.basename(p)) and _ours(p)]
+    if host.tmp:
+        scratch = [p for p in _children(host.tmp) if p in known or os.path.basename(p).startswith(tmpdirs.RUNNER_PREFIX)]
+        found += [child for p in scratch for child in _entries(p)]
+        found += [p for p in scratch if p in known and not _entries(p)]
+    return tuple(tidy.Tree(p, newest(p, now, 3)) for p in found)
 
 
 def _containers(host: Host) -> tuple:
@@ -256,7 +305,7 @@ def _caches(host: Host) -> tuple:
 
 def observe(host: Host) -> tidy.Snapshot:
     now = host.now()
-    held_paths, held_args, held_ports = live_processes(host.proc)
+    held_paths, held_args, held_ports, scratch = live_processes(host.proc, tuple(r for r in (host.tmp, host.unpacks) if r))
     # A batch is recorded with pid 0 until its process has started; that is a live batch, not a dead one.
     batches = frozenset(b for b, rec in host.state.get("batches", {}).items()
                         if rec.get("status") == "running" and (rec.get("pid", 0) == 0 or procs.alive(rec["pid"])))
@@ -265,7 +314,7 @@ def observe(host: Host) -> tidy.Snapshot:
         builds=tuple(tidy.Tree(p, newest(p, now, 3)) for base in host.builds for p in _children(base)),
         unpacks=tuple(tidy.Tree(p, newest(p, now, 0)) for p in unpacks),
         containers=_containers(host), networks=_networks(host), checkouts=_checkouts(host),
-        held_paths=held_paths, held_args=held_args, held_ports=held_ports, batches=batches,
+        held_paths=held_paths, held_args=held_args, held_ports=held_ports, scratch=scratch, batches=batches, temps=_temps(host, now),
         starts=tuple((slug, w["path"]) for slug, w in host.state.get("worktrees", {}).items()),
         caches=_caches(host),
     )
@@ -274,7 +323,10 @@ def observe(host: Host) -> tidy.Snapshot:
 def _remove_tree(host: Host, path: str) -> str:
     """Removes `path`; what a container ran as root left behind is removed through docker."""
     try:
-        host.remove_tree(path)
+        if os.path.isdir(path) and not os.path.islink(path):
+            host.remove_tree(path)
+        else:
+            os.remove(path)
     except OSError:
         parent = os.path.dirname(path)
         host.run(["docker", "run", "--rm", "--init", "-v", f"{parent}:/b", "alpine", "rm", "-rf", f"/b/{os.path.basename(path)}"])

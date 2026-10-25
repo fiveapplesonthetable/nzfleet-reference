@@ -34,16 +34,31 @@ class ResourceBudget(unittest.TestCase):
         trusted, shared, limits = budget.plan(budget.cpus("0-71"), WORKFLOW, QUOTAS)
         self.assertEqual(len(trusted), 36)
         self.assertEqual(len(shared), 36)
-        self.assertEqual(limits, (36, 24, 8, 24, 24, (7, 3, 3), 12, 2, 6, 4, 2, 5))
+        self.assertEqual(limits, (36, 24, 20, 12, 12, (7, 3, 3), 12, 2, 6, 4, 2, 5))
+
+    def test_the_owner_keeps_twenty_four_cpus_and_the_pr_tier_twenty(self):
+        self.assertEqual((QUOTAS["owner"], QUOTAS["pr"]), (24, 20))
+
+    def test_the_owner_slice_outweighs_the_pull_request_slice(self):
+        weights = budget.configured_weights()
+        self.assertGreater(weights["owner"], weights["pr"])
+        with self.assertRaisesRegex(ValueError, "owner slice must weigh more"):
+            budget.plan(budget.cpus("0-71"), WORKFLOW, QUOTAS, weights={"owner": 100, "pr": 100})
+
+    def test_a_batch_or_agent_that_could_fill_the_owner_slice_is_refused(self):
+        for key in ("batch", "agent"):
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(ValueError, "interactive headroom"):
+                    budget.plan(budget.cpus("0-71"), WORKFLOW, {**QUOTAS, key: QUOTAS["owner"]})
 
     def test_small_host_refuses_an_overcommitted_partition(self):
         with self.assertRaisesRegex(ValueError, "effective affinity|aggregate quotas"):
-            budget.plan(budget.cpus("0-63"), WORKFLOW, QUOTAS)
+            budget.plan(budget.cpus("0-62"), WORKFLOW, QUOTAS)
 
     def test_configured_partition_is_checked_on_a_hosted_runner(self):
-        configured_host = set(range(QUOTAS["trusted"] + QUOTAS["owner"] + QUOTAS["pr"] + 4))
+        configured_host = set(range(QUOTAS["trusted"] + max(QUOTAS["owner"], QUOTAS["pr"]) + 4))
         trusted, shared, _ = budget.plan(configured_host, WORKFLOW, QUOTAS)
-        self.assertEqual((len(trusted), len(shared)), (36, 36))
+        self.assertEqual((len(trusted), len(shared)), (36, 28))
 
     def test_installation_still_refuses_a_four_cpu_host(self):
         with self.assertRaisesRegex(ValueError, "effective affinity"):
@@ -59,7 +74,7 @@ class ResourceBudget(unittest.TestCase):
             capture_output=True, text=True, check=False,
         )
         self.assertEqual(configured.returncode, 0, configured.stderr)
-        self.assertIn("trusted=0-35 shared=36-71", configured.stdout)
+        self.assertIn("trusted=0-35 shared=36-63", configured.stdout)
         self.assertEqual(installation.returncode, 2, installation.stderr)
         self.assertIn("CPU quota exceeds effective affinity", installation.stderr)
 
@@ -130,15 +145,28 @@ class ResourceBudget(unittest.TestCase):
             budget.plan(budget.cpus("0-71"), mismatch, QUOTAS)
 
     def test_old_partition_cannot_run_the_ci_job_budget(self):
-        old = {"trusted": 8, "owner": 28, "pr": 12, "batch": 16, "agent": 12}
+        old = {"trusted": 8, "owner": 28, "pr": 12, "batch": 16, "agent": 12, "background": 4}
         with self.assertRaisesRegex(ValueError, "CI jobs, Android"):
             budget.plan(budget.cpus("0-71"), WORKFLOW, old)
 
     def test_agent_and_batch_share_the_owner_ceiling(self):
         over = {**QUOTAS, "agent": 25}
-        with self.assertRaisesRegex(ValueError, "shared owner slice"):
+        with self.assertRaisesRegex(ValueError, "interactive headroom"):
             budget.plan(budget.cpus("0-71"), WORKFLOW, over)
+
+    def test_background_load_shares_the_owner_ceiling(self):
+        over = {**QUOTAS, "background": QUOTAS["owner"] + 1}
+        with self.assertRaisesRegex(ValueError, "interactive headroom"):
+            budget.plan(budget.cpus("0-71"), WORKFLOW, over)
+
+    def test_the_pull_request_tier_holds_its_heaviest_job(self):
+        self.assertGreaterEqual(QUOTAS["pr"], budget.heaviest_job(WORKFLOW))
+        with self.assertRaisesRegex(ValueError, "heaviest job declares 12"):
+            budget.plan(budget.cpus("0-71"), WORKFLOW, {**QUOTAS, "pr": 8, "owner": 16})
+
+    def test_the_pull_request_tier_has_twenty_cpus_and_the_owner_twenty_four(self):
+        self.assertEqual((QUOTAS["pr"], QUOTAS["owner"], QUOTAS["background"]), (20, 24, 4))
 
     def test_host_reserve_is_four_cpus(self):
         with self.assertRaisesRegex(ValueError, "aggregate quotas"):
-            budget.plan(budget.cpus("0-71"), WORKFLOW, QUOTAS, reserves=5)
+            budget.plan(budget.cpus("0-71"), WORKFLOW, QUOTAS, reserves=13)

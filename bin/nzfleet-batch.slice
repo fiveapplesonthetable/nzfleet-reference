@@ -2,5 +2,5 @@
 Description=nzfleet batches: the checks that gate a merge
 
 [Slice]
-CPUQuota=2400%
+CPUQuota=1200%
 CPUWeight=100

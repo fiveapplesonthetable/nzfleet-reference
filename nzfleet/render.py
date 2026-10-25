@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from . import blocked, progress, snapshot as snap
+from . import blocked, progress, rootdisk, snapshot as snap
 
 
 def _span(seconds) -> str:
@@ -71,7 +71,8 @@ def agents(rows: list) -> list:
 def machine(m: dict) -> list:
     out = ["MACHINE", f"  load {m['load'][0]:.0f} {m['load'][1]:.0f} {m['load'][2]:.0f} of {m['cores']} cores; memory "
            f"{m['mem_free_gb']} of {m['mem_total_gb']} GB free" + (f"; {m['temp_c']:.0f} C" if m.get("temp_c") is not None else "")]
-    out += [f"  disk {d['mount']}: {d['free_gb']} GB free" for d in m["disk"]]
+    out += [f"  disk {d['mount']}: {d['free_gb']} GB free, {d['used_percent']}% used"
+            + (" (FILLING)" if d["used_percent"] >= rootdisk.WARN_PERCENT else "") for d in m["disk"]]
     out.append("  CPU by owner (cores in use / quota):")
     out += [f"    {o:14}{v['cores']:>6.1f} / {v['quota'] if v['quota'] is not None else '-'}" for o, v in m["cpu_by_owner"].items()]
     return out

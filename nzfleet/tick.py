@@ -701,7 +701,7 @@ def tidy_machine(dry_run: bool) -> None:
     s = state.read()
     if not dry_run and not tidying.due(s["tidied"], time.time()):
         return
-    host = janitor.Host(list(config.BUILD_ROOTS), config.WORK, config.REPO, state=s,
+    host = janitor.Host(list(config.BUILD_ROOTS), config.WORK, config.REPO, tmp=config.tmp_root(), state=s,
                         caches=janitor.caches(config.HOME, config.WARM, config.SCCACHE, config.CACHE, config.WORK), jev_act=config.JEV_ACT)
     for line in janitor.run(host, dry_run):
         say(line)

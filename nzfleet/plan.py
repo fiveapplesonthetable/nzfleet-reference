@@ -36,7 +36,7 @@ class Passed:
     batch: str
 
 
-CI_FILES = re.compile(r"^(\.github/workflows/|scripts/checks\.sh$|scripts/areas(/|$)|scripts/changed-areas\.sh$)")
+CI_FILES = re.compile(r"^(\.github/workflows/|scripts/checks\.sh$|scripts/areas(/|$)|tools/nzfleet/nzfleet/selection/)")
 
 
 def touches_ci(files) -> bool:
@@ -223,27 +223,27 @@ def covered(touched: frozenset, checked: list, skipped: frozenset = frozenset())
     return set(touched) - set(skipped) <= set(checked)
 
 
-# What draws, compares or publishes the frontends' screenshots and goldens. changed-areas.sh sees a workflow or a
+# What draws, compares or publishes the frontends' screenshots and goldens. the area selection sees a workflow or a
 # script here as a deploy change, so a pass that ran only that proves nothing about the pixels.
 PIXEL_FILES = re.compile(r"(^|/)(golden|goldens|screenshots)(/|$)|^scripts/shot-report|^\.github/workflows/shots\.yaml$")
 
 
-# What each slow area reads. changed-areas.sh also selects them for a change to checks.sh or ci, which rewrites no
+# What each slow area reads. the area selection also selects them for a change to checks.sh or ci, which rewrites no
 # pixel and no fuzz input; a train that touches none of these has nothing for the area to redraw or run.
 AREA_INPUTS = {
-    "console": re.compile(r"^crates/nzela-wire/|^frontend/admin/|^crates/nzela-platform/src/|^crates/nzela-operator-[a-z]+/src/|^scripts/shots?\.sh$|" + PIXEL_FILES.pattern),
-    "console-crawl": re.compile(r"^crates/nzela-wire/|^frontend/admin/|^crates/(nzela-operator-[a-z]+/src|nzela-platform/src/web)/|^scripts/(contract\.sh|typeshare\.toml)$"),
-    "android": re.compile(r"^frontend/android/|^crates/nzela-platform/src/|" + PIXEL_FILES.pattern),
+    "console": re.compile(r"^crates/nzela-wire/|^frontend/admin/|^crates/nzela-(platform|api|web)/src/|^crates/nzela-operator-[a-z]+/src/|^scripts/shots?\.sh$|" + PIXEL_FILES.pattern),
+    "console-crawl": re.compile(r"^crates/nzela-wire/|^frontend/admin/|^crates/(nzela-operator-[a-z]+|nzela-web)/src/|^scripts/(contract\.sh|typeshare\.toml)$"),
+    "android": re.compile(r"^frontend/android/|^crates/nzela-(platform|api|web)/src/|" + PIXEL_FILES.pattern),
     "fuzz": re.compile(r"^crates/|^fuzz/|^Cargo\.(toml|lock)$"),
 }
 
 
-# What a train's client suites read. These are changed-areas.sh's android_reads and console_reads; a test runs
+# What a train's client suites read. These are the area selection's android_reads and console_reads; a test runs
 # both over the same paths.
 TRAIN_INPUTS = {
-    "console": re.compile(r"^crates/nzela-wire/|^frontend/admin/|^crates/(nzela-operator-[a-z]+/src|nzela-platform/src/web)/|^scripts/(contract\.sh|typeshare\.toml)$"),
-    "console-crawl": re.compile(r"^crates/nzela-wire/|^frontend/admin/|^crates/(nzela-operator-[a-z]+/src|nzela-platform/src/web)/|^scripts/(contract\.sh|typeshare\.toml)$"),
-    "android": re.compile(r"^crates/nzela-wire/|^frontend/android/|^crates/nzela-platform/src/(api/|web/code\.rs$|notify/mod\.rs$)|"
+    "console": re.compile(r"^crates/nzela-wire/|^frontend/admin/|^crates/(nzela-operator-[a-z]+|nzela-web)/src/|^scripts/(contract\.sh|typeshare\.toml)$"),
+    "console-crawl": re.compile(r"^crates/nzela-wire/|^frontend/admin/|^crates/(nzela-operator-[a-z]+|nzela-web)/src/|^scripts/(contract\.sh|typeshare\.toml)$"),
+    "android": re.compile(r"^crates/nzela-wire/|^frontend/android/|^crates/nzela-api/src/|^crates/nzela-web/src/code\.rs$|"
                           r"^scripts/(contract\.sh|typeshare\.toml)$"),
 }
 
@@ -252,7 +252,7 @@ def check_areas(selected: frozenset, files: list, skipped: frozenset, train: boo
     """The checks needed before readiness; formal runs after merge, while a train holds clients to its server.
 
     A train defers screenshot sweeps to main, so a screenshot asks only the suite of the frontend it sits in; what
-    `selected` names (compile included) is what changed-areas.sh asked for.
+    `selected` names (compile included) is what the area selection asked for.
     """
     required = set(selected) - set(skipped) - {"formal"}
     if train:
@@ -1072,12 +1072,12 @@ def _native_service_options(area: str, options: str, cpus: int) -> str:
 
 # A pull request may name its own warm directory; a batch is never a pull request, so both forms mean the same to it.
 WARM_VOLUMES = {"${{ github.event_name != 'pull_request' && (vars.CI_WARM_DIR || (vars.CI_RUNS_ON && format('/srv/fleet/nzfleet/ci-cache/repo-{0}', github.repository_id))) || format('nzela-warm-{0}', github.run_id) }}:/warm",
-                "${{ github.event_name != 'pull_request' && (vars.CI_WARM_DIR || (vars.CI_RUNS_ON && format('/srv/fleet/nzfleet/ci-cache/repo-{0}', github.repository_id))) || (vars.CI_PR_WARM_DIR || format('nzela-warm-{0}', github.run_id)) }}:/warm"}
+                "${{ github.event_name != 'pull_request' && (vars.CI_WARM_DIR || (vars.CI_RUNS_ON && format('/srv/fleet/nzfleet/ci-cache/repo-{0}', github.repository_id))) || (vars.CI_PR_WARM_DIR || format('/srv/fleet/nzela-pr/ci-cache/repo-{0}', github.repository_id)) }}:/warm"}
 
 
 def _native_step_env(area: str, values: dict) -> dict:
     supported = {"CI_WARM_OVERRIDE": {"${{ github.event_name != 'pull_request' && vars.CI_WARM_DIR || '' }}",
-                                      "${{ github.event_name != 'pull_request' && vars.CI_WARM_DIR || (github.event_name == 'pull_request' && vars.CI_PR_WARM_DIR) || '' }}"},
+                                      "${{ github.event_name != 'pull_request' && vars.CI_WARM_DIR || (github.event_name == 'pull_request' && (vars.CI_PR_WARM_DIR || format('/srv/fleet/nzela-pr/ci-cache/repo-{0}', github.repository_id))) || '' }}"},
                  "CI_SELF_HOSTED": {"${{ github.event_name != 'pull_request' && vars.CI_RUNS_ON || '' }}"}}
     result = {}
     for key, value in values.items():
@@ -1110,7 +1110,8 @@ def _host_resource_env(area: str, env: dict) -> dict:
                 continue
             result[key] = str(value)
             continue
-        match = re.fullmatch(r"\$\{\{ vars\.CI_RUNS_ON && '" + re.escape(supported[key]) + r"(\d+)' \|\| '' \}\}", str(value))
+        guard = r"(?:vars\.CI_RUNS_ON|\(github\.event_name == 'pull_request' \|\| vars\.CI_RUNS_ON\))"
+        match = re.fullmatch(r"\$\{\{ " + guard + r" && '" + re.escape(supported[key]) + r"(\d+)' \|\| '' \}\}", str(value))
         if not match:
             raise ValueError(f"{area}: unsupported {key} resource expression")
         result[key] = f"{supported[key]}{match[1]}"
