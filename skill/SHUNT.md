@@ -161,3 +161,34 @@ Provider `start/resume/tell/stop/cost` (`dispatch/provider.rs:66-117`); bisect (
 ### Migration path, when the blockers are gone
 
 Not yet. Items 1 and 2 are the daemon's two hands with the worst failure modes and both run unattended; 4 means the owner would hear nothing. Next review after the daemon samples real process trees and git state, tidy rescues before removal, and the suite is green five times under load with every skip turned into a failure or a listed exclusion.
+
+## Where shunt stands at a4f672c (reviewed 25 Oct, built and tested)
+
+
+Built with `cargo +1.98 build --workspace --tests --offline` (2 min 27 s, clean); tests at load 85 to 140 with 125 of 128 inotify instances in use. The full run hit the 10 minute cap because the daemon unit-test binary alone took 578 s, so the workspace ran as `--exclude tacho-daemon` (1 min 50 s) plus the daemon binaries: 967 passed, 2 failed. Nothing left the machine. Logs: kept locally.
+
+### Verdict: not ready
+
+Four of six are fixed or close. What stops it: a git bug that hit this host during the run, rescue-less deletions, and a merge path.
+
+### Earlier blockers
+
+1. **Stall samples: fixed.** `exec/observe.rs:29-97` reads `/proc/<pid>/stat`, `cmdline`, `cwd`; `agent_cpu_ticks` (102-127) sums the tree plus the `tacho-*.scope` cgroup only (`cgroup.rs:175-184`); `progress_sample` (188-210) returns `None` without a verified pid, and `decide/mod.rs:250` then takes no verdict. The daemon runs the same code (`sampler/mod.rs:523-529` → `exec/mod.rs:285-298`).
+
+2. **Tidy: partly.** Age is idle time, unknown dirtiness counts as dirty (`observe.rs:285-295`), and `apply_tidy_decisions` rescues first and keeps the tree on failure (`tidy.rs:111-126`). Still removed unseen: `decide/mod.rs:566` queues `RemoveTree { rescue: false }` for a retired or merged agent's worktree `decide_tidy` skipped; `tidy.rs:128` ignores the `rescue` flag on `RemoveCheckout` (`legacy_ops.rs:246`); a non-git directory goes to `remove_dir_all` (`tidy.rs:180`).
+
+3. **Force push: partly.** `shape.rs:242-267` pushes `--force-with-lease=<branch>:<pr.head>` and mutates the store only on success (274-283); the test at 464 proves a moved remote is refused. But `pr.head` is the cached `open_prs_cache` row (391-395), not observed at replay time, and an empty head falls back to the bare tracking-ref lease (243-244). It also pushes `--no-verify` (250), skipping nzela's hook.
+
+4. **Notifications: partly.** `exec/mod.rs:743-760` runs `notify_owner_command` (scrubbed, `plugin.rs:887-927`) and `forge.set_issue` (scrubbed, 806-836), but every result is `let _ =`, so a failed mail is never recorded or retried, and the daemon loop never sets `opts.forge` (`sampler/mod.rs:523`, `fleet.rs:990`; only `watch.rs:144-152` does), so the daemon cannot open "main is red".
+
+5. **inotify and orphans: fixed.** Zero inotify failures at 125/128 (`e2e/lib.rs:586`, `test_util.rs:12` fall back to poll); no daemon left behind. Two daemon unit tests fail: `test_daemon_autonomously_runs_decide_without_api_tick` passes alone in 1.4 s (load flake: `sample_now()` returns before the tick sees the run); the other is the bug below, whose hang holds the process-wide `TICK_LOCK` (`exec/mod.rs:266`) and stalls every other tick test. `queries.rs:127` now requires `trace_processor_shell`.
+
+6. **Golden screenshots: fixed.** `verdict.rs`/`machine.rs`: refresh only on `Green`, non-golden only; a golden diff stays `Red`.
+
+### New blockers
+
+- **Git is not confined to the worktree.** `observe_worktree` (157-171) and `tree_of_worktree` (`tidy.rs:229-306`) run git in `dir` with no toplevel check. A recorded path that is a plain directory resolves to the enclosing repository: its status makes the tree "dirty", and the rescue runs `git add -A` over that whole repo with no timeout, then `update-ref refs/heads/rescue/…` in it. Observed: the fleet test (`fleet.rs:1164`) ran `git add -A` across all of `/srv/fleet` for six minutes, and `run_git`'s SIGKILL at 5 s (`sampler/worktree.rs:241-244`) left `/srv/fleet/.git/index.lock` (removed by hand). On nzela that kill on each live worktree's `git status` every tick leaves `index.lock` files that break the agent's next commit.
+- **`tacho land` merges.** `land.rs:111-116` runs `gh pr ready` then `gh pr merge --merge` (`plugin.rs:870-882`) for every PR of the train. Only the CLI calls it (`main.rs:466`), never the daemon, but nothing disables it: the gate is `TACHO_GH_REPO`, which also enables issues. The owner merges by hand; this needs an off switch.
+- No new credential path: `gh` uses ambient auth and bodies are scrubbed; `TACHO_NOTIFY` is the one `sh -c` (`plugin.rs:902`).
+
+Next review once git refuses a directory whose toplevel is not itself, the rescue-less removals go, merging is off by config, and the suite is green five times under load in ten minutes.
