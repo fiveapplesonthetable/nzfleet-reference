@@ -97,7 +97,10 @@ class TheEnvironmentAJobGetsForTheCachesMountedIntoIt(unittest.TestCase):
                         "-c", "max_connections=300"])
                 if current.warm_volume:
                     argv = launched[-1]
-                    expected = plan.job_argv(current, area, area, mounts, temp,
+                    launched_mounts = dict(mounts)
+                    if area == "console":
+                        launched_mounts[os.path.join(target, area, "node_modules")] = os.path.join(temp, "frontend", "admin", "node_modules")
+                    expected = plan.job_argv(current, area, area, launched_mounts, temp,
                                              f"{os.getuid()}:{os.getgid()}",
                                               {**{key: value for key, value in inherited.items() if key not in current.env},
                                               "CARGO_TARGET_DIR": f"/target/{area}", "CARGO_BUILD_JOBS": str(current.cpus),
@@ -229,7 +232,7 @@ class TheEnvironmentAJobGetsForTheCachesMountedIntoIt(unittest.TestCase):
             root, target = os.path.join(temp, "tree"), os.path.join(temp, "warm target")
             admin = os.path.join(root, "frontend", "admin")
             os.makedirs(os.path.join(admin, "node_modules"))
-            mounts = {target: "/target"}
+            mounts = {target: "/target", os.path.join(temp, "warm"): "/warm"}
             commands = {}
 
             def capture(argv, **_):

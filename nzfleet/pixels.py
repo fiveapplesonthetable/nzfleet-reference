@@ -79,3 +79,18 @@ def moved(before: Optional[bytes], after: Optional[bytes], golden: bool = False)
             return True
         differing += sum(1 for x, y in zip(a, b) if abs(x - y) > EDGE)
     return differing > SHARE * one[0] * one[1] * one[2]
+
+
+def size_of(data: Optional[bytes]):
+    """(width, height) of a PNG, or None when it is missing or not one this module reads."""
+    one = decode(data)
+    return None if one is None else one[:2]
+
+
+def share_changed(before: Optional[bytes], after: Optional[bytes]) -> Optional[float]:
+    """The share of channels that differ between two same-sized pictures, or None when they cannot be compared."""
+    one, two = decode(before), decode(after)
+    if one is None or two is None or one[:3] != two[:3]:
+        return None
+    differing = sum(1 for a, b in zip(one[3], two[3]) if a != b for x, y in zip(a, b) if x != y)
+    return differing / (one[0] * one[1] * one[2])

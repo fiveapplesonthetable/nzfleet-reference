@@ -51,10 +51,10 @@ class AChangeSelectsOnlyTheAreasItTouches(unittest.TestCase):
 
 class ASinceSelectionFallsBackToEverything(unittest.TestCase):
     def test_an_empty_base_selects_every_area(self):
-        self.assertEqual(since.since(""), areas.ALL)
+        self.assertEqual(since.since(""), (*areas.ALL, *since.COSTLY))
 
     def test_an_unknown_base_selects_every_area(self):
-        self.assertEqual(since.since("0" * 40), areas.ALL)
+        self.assertEqual(since.since("0" * 40), (*areas.ALL, *since.COSTLY))
 
     def test_the_deployable_flag_adds_what_deploy_takes(self):
         with tempfile.TemporaryDirectory() as repo:
@@ -71,9 +71,57 @@ class ASinceSelectionFallsBackToEverything(unittest.TestCase):
             os.chdir(repo)
             try:
                 self.assertEqual(since.since(base), ("secrets",))
-                self.assertEqual(since.since(base, deployable=True), ("secrets", "android", "image", "deploy"))
+                self.assertEqual(since.since(base, deployable=True), ("secrets", "android", "image", "deploy", "android-release"))
             finally:
                 os.chdir(old)
+
+
+def costly(*paths, pull_request=True, train=False):
+    found, _ = areas.select(list(paths), "change")
+    return set(since.costly(tuple(found), list(paths), pull_request, train))
+
+
+class APullRequestBuildsOnlyWhatItCanBreak(unittest.TestCase):
+    def test_a_console_change_builds_no_image_and_no_release(self):
+        got = costly("frontend/admin/src/a.ts")
+        self.assertEqual(got & {"image", "android-release"}, set())
+        self.assertIn("console-browser", got)
+
+    def test_a_service_change_builds_no_image(self):
+        self.assertNotIn("image", costly("crates/nzela-api/src/a.rs"))
+
+    def test_a_dockerfile_change_builds_the_image(self):
+        self.assertIn("image", costly("deploy/Dockerfile"))
+
+    def test_a_crate_manifest_change_builds_the_image(self):
+        self.assertIn("image", costly("crates/nzela-core/Cargo.toml"))
+
+    def test_an_android_source_change_assembles_no_release(self):
+        got = costly("frontend/android/app/src/main/java/app/nzela/Home.kt")
+        self.assertIn("android", got)
+        self.assertNotIn("android-release", got)
+
+    def test_an_android_build_script_change_assembles_the_release(self):
+        self.assertIn("android-release", costly("frontend/android/app/build.gradle.kts"))
+
+    def test_console_screenshots_alone_run_no_browser_suite(self):
+        got = costly("frontend/admin/screenshots/home.png")
+        self.assertIn("console", got)
+        self.assertNotIn("console-browser", got)
+
+    def test_a_console_source_beside_screenshots_runs_the_browser_suite(self):
+        self.assertIn("console-browser", costly("frontend/admin/screenshots/home.png", "frontend/admin/src/a.ts"))
+
+    def test_a_train_builds_all_three(self):
+        got = costly("frontend/admin/src/a.ts", "frontend/android/app/src/main/java/a.kt", train=True)
+        self.assertGreaterEqual(got, {"image", "android-release", "console-browser"})
+
+    def test_main_builds_every_part_of_the_areas_it_runs(self):
+        got = costly("frontend/admin/src/a.ts", "frontend/android/app/src/main/java/a.kt", "deploy/Dockerfile", pull_request=False)
+        self.assertGreaterEqual(got, {"image", "android-release", "console-browser"})
+
+    def test_a_change_with_no_android_has_no_release_to_assemble(self):
+        self.assertNotIn("android-release", costly("frontend/admin/src/a.ts", pull_request=False))
 
 
 class TheTestsAChangeNamesAreTheOnesItAffects(unittest.TestCase):

@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 
-from . import agents, batch as batching, checkout, cloud, config, fixes, holds, janitor, jev, jev_points, journeys_run, landed as landed_mod, machine, mail, owner, owner_tick, plan, procs, rebases, runs, snapshot_tick, state, supervise_tick, task_queue, tidy as tidying, train, trainrun, unbreak, world
+from . import agents, batch as batching, checkout, cloud, config, fixes, holds, janitor, jev, jev_points, journeys_run, landed as landed_mod, machine, mail, owner, owner_tick, plan, procs, rebases, runs, shotsfix, snapshot_tick, state, supervise_tick, task_queue, tidy as tidying, train, trainrun, unbreak, world
 
 QUEUE_TITLE = "Merge queue"
 BATCH_SLOTS = 2
@@ -459,11 +459,12 @@ def main_health(dry_run: bool) -> None:
                              if before.get("sha") == sha and before.get("run_id") == run_id else observed_at}
     if sha in s["main_reported"]:
         return
-    code = {}
+    code, golden_moved = {}, False
     for job in (j for j, c in conclusions.items() if c == "failure"):
         log = world.job_log(run_id, job)
         if plan.classify(log) == "code":
             code[job] = ", ".join(plan.failed_tests(log)[:5]) or "see the job"
+            golden_moved = golden_moved or shotsfix.GOLDEN_MOVED in log
     previous = s.get("main_code_failures", {})
     repeated = {job: tests for job, tests in code.items() if job in previous}
     if dry_run:
@@ -474,11 +475,12 @@ def main_health(dry_run: bool) -> None:
     if not code:
         return
     text = "; ".join(f"{job}: {tests}" for job, tests in code.items())
-    tell_event(f"main {sha[:8]} is red in code: {text}")
+    tell_event(f"main {sha[:8]} is red in code: {text}" + (f"; a golden shot moved, `nzfleet shots fix {sha[:8]}` says why" if golden_moved else ""))
     if repeated and not dry_run:
         detail = "; ".join(f"{job}: {tests}" for job, tests in repeated.items())
         say(agents.start(f"main-{sha[:8]}", f"Main's CI has failed twice in a row in code ({sha}): {detail}. Find the "
-                         f"cause and open a PR that fixes it at the root; a test that fails without the fix is required."))
+                         f"cause and open a PR that fixes it at the root; a test that fails without the fix is required."
+                         + (f" A golden screenshot moved: run `nzfleet shots fix {sha[:8]}` first, it names a canvas break or drift." if golden_moved else "")))
 
 
 def comments(dry_run: bool) -> None:

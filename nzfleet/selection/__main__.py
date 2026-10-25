@@ -10,7 +10,7 @@ import datetime
 import os
 import sys
 
-from . import areas, changed_tests, files, last_green, nightly, proof, since
+from . import areas, changed_tests, files, last_green, nightly, proof, related, since
 
 
 def _paths() -> list:
@@ -26,7 +26,7 @@ def _areas(args) -> int:
 
 
 def _since(args) -> int:
-    print("\n".join(since.since(args.base, args.deployable)))
+    print("\n".join(since.since(args.base, args.deployable, args.pull_request, args.train)))
     return 0
 
 
@@ -41,6 +41,32 @@ def _tests(args) -> int:
     except changed_tests.NoSuchArea as error:
         print(error, file=sys.stderr)
         return 2
+    print("\n".join(chosen))
+    return 0
+
+
+def _read_tree(root: str, suffixes: tuple) -> dict:
+    found = {}
+    for directory, _, names in os.walk(root):
+        if "node_modules" in directory.split(os.sep):
+            continue
+        for name in names:
+            if name.endswith(suffixes):
+                path = os.path.join(directory, name)
+                with open(path, encoding="utf-8", errors="replace") as handle:
+                    found[path] = handle.read()
+    return found
+
+
+def _related(args) -> int:
+    paths = _paths()
+    if args.area == "fleet":
+        chosen = related.fleet(paths, _read_tree("tools/nzfleet/tests", (".py",)))
+    else:
+        modules = _read_tree("frontend/admin/src", (".ts", ".tsx", ".mjs"))
+        modules.update(_read_tree("frontend/admin/tests", (".ts", ".tsx", ".mjs")))
+        tests = {p for p in modules if p.startswith("frontend/admin/tests/") and p.endswith(".test.mjs")}
+        chosen = related.console(paths, modules, tests)
     print("\n".join(chosen))
     return 0
 
@@ -103,12 +129,17 @@ def parser() -> argparse.ArgumentParser:
     a.set_defaults(run=_areas)
     s = sub.add_parser("since", help="areas for the changes since BASE")
     s.add_argument("--deployable", action="store_true")
+    s.add_argument("--pull-request", action="store_true")
+    s.add_argument("--train", action="store_true")
     s.add_argument("base", nargs="?", default="")
     s.set_defaults(run=_since)
     t = sub.add_parser("tests", help="tests for the paths on stdin")
     t.add_argument("--mode", choices=("repeat", "all", "affected"), default="repeat")
     t.add_argument("area")
     t.set_defaults(run=_tests)
+    x = sub.add_parser("related", help="unit tests related to the paths on stdin, run from the repository root")
+    x.add_argument("area", choices=("fleet", "console"))
+    x.set_defaults(run=_related)
     g = sub.add_parser("last-green", help="newest green ancestor from the runs API response on stdin")
     g.add_argument("head", nargs="?", default="HEAD")
     g.set_defaults(run=_last_green)

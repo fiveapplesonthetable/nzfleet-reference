@@ -197,7 +197,7 @@ class WhatCiSetsUp(unittest.TestCase):
 
     def test_the_steps_ci_runs_before_the_checks_run_before_them(self):
         steps = job("deploy").steps
-        self.assertIn("apt-get install", steps[0])
+        self.assertIn("ci-tools.sh shell-checks", steps[0])
         self.assertEqual(steps[-1], "scripts/checks.sh deploy")
 
     def test_deploy_runs_without_console_dependencies(self):

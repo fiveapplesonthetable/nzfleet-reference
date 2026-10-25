@@ -91,12 +91,12 @@ class ResourceBudget(unittest.TestCase):
             budget.validate(budget.cpus("0-71"), budget.cpus("0-39"), budget.cpus("32-71"), WORKFLOW, QUOTAS)
 
     def test_extra_ci_container_budget_consumes_android_and_service_headroom(self):
-        overloaded = WORKFLOW.replace("options: ${{ vars.CI_RUNS_ON && '--cpus=12' || '' }}\n    timeout-minutes: 30", "options: ${{ vars.CI_RUNS_ON && '--cpus=17' || '' }}\n    timeout-minutes: 30", 1)
+        overloaded = WORKFLOW.replace("options: ${{ vars.CI_RUNS_ON && '--cpus=12' || '' }}", "options: ${{ vars.CI_RUNS_ON && '--cpus=17' || '' }}", 1)
         with self.assertRaisesRegex(ValueError, "console browser cap"):
             budget.plan(budget.cpus("0-71"), overloaded, QUOTAS)
 
     def test_console_browser_budget_is_counted_separately(self):
-        overloaded = WORKFLOW.replace("options: ${{ vars.CI_RUNS_ON && '--cpus=12' || '' }}\n    timeout-minutes: 30", "options: ${{ vars.CI_RUNS_ON && '--cpus=17' || '' }}\n    timeout-minutes: 30", 1)
+        overloaded = WORKFLOW.replace("options: ${{ vars.CI_RUNS_ON && '--cpus=12' || '' }}", "options: ${{ vars.CI_RUNS_ON && '--cpus=17' || '' }}", 1)
         with self.assertRaisesRegex(ValueError, "console browser cap"):
             budget.plan(budget.cpus("0-71"), overloaded, QUOTAS)
 

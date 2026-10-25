@@ -10,7 +10,7 @@ import shutil
 import sys
 import time
 
-from . import agents, batch, blocked, choice, cloud, codehost, config, db, event_log, holds, janitor, jev, journeys_run, land, machine, openpr, owner, plan, procs, progress, prove as prover, runs, selfupdate, serve as serving, setup as bootstrap, starve as starving, state, status_view, supervise_tick, tick, tidy as tidying, top as topview, train, triage as triaging, trainrun, units, warm, watchdog, work, world
+from . import agents, batch, blocked, choice, cloud, codehost, config, db, event_log, holds, janitor, jev, journeys_run, land, machine, openpr, owner, plan, procs, progress, prove as prover, runs, selfupdate, shotsfix, serve as serving, setup as bootstrap, starve as starving, state, status_view, supervise_tick, tick, tidy as tidying, top as topview, train, triage as triaging, trainrun, units, warm, watchdog, work, world
 
 
 def _files(files: list) -> str:
@@ -356,6 +356,10 @@ def start(args) -> int:
     return work.start(args.slug, args.base)
 
 
+def shots_fix(args) -> int:
+    return shotsfix.fix(args.ref, args.report or "", args.report_url or "", args.area or None)
+
+
 def prove(_args) -> int:
     return prover.prove()
 
@@ -613,6 +617,14 @@ def main(argv) -> int:
     st.add_argument("slug", help="what becomes true, as the branch name: a-held-rate-can-be-discarded")
     st.add_argument("--base", default="main", help="main, or the number of the PR this one stacks on")
     st.set_defaults(fn=start)
+    sf = sub.add_parser("shots", help="screenshots: `shots fix <pr-or-ref>` says why a golden moved and settles the intended ones")
+    sfs = sf.add_subparsers(dest="shots_cmd", required=True)
+    sff = sfs.add_parser("fix", help="classify each moved golden: canvas break (never commit), intended (commit to the branch), drift (report)")
+    sff.add_argument("ref", help="a PR number, a branch or `main`")
+    sff.add_argument("--report", help="a shot-report directory from a run; without it the ref is drawn here")
+    sff.add_argument("--report-url", help="where the report can be read, for the commit body")
+    sff.add_argument("--area", action="append", choices=["console", "android"], help="draw only this area (repeatable)")
+    sff.set_defaults(fn=shots_fix)
     sub.add_parser("prove", help="run the checks this change calls for, here, in the foreground").set_defaults(fn=prove)
     wt = sub.add_parser("wait", help="wait up to 9 minutes for a process: exit 0 it ended, 3 call again")
     wt.add_argument("target", help="a name given to `run`, or a pid")

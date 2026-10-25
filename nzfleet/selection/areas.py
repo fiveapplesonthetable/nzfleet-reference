@@ -42,6 +42,19 @@ DEPLOY_INPUTS = (r"^deploy/Dockerfile$|^deploy/compose.*\.yaml$"
                  r"|^tools/nzfleet/runner/|^scripts/(release|drift|backup|backup-test|backup-fresh|offsite-backup)")
 
 
+# What a pull request must build to catch what main would otherwise catch. The release image is built from
+# the workspace manifests, the Dockerfile and what the deploy tree ships; the release APK from the build
+# scripts, the manifest and the shrinker rules; the browser suite from everything under the console except
+# the pictures and prose it only holds. A train carries all three, since main reuses its image.
+IMAGE_INPUTS = re.compile(
+    r"^deploy/|^\.dockerignore$|^Cargo\.(toml|lock)$|^crates/[^/]+/Cargo\.toml$|^\.sqlx/|^rust-toolchain(\.toml)?$"
+    r"|^\.cargo/|^scripts/(backup|restore-drill|offsite-restore-check|push-image|reuse-image)")
+ANDROID_RELEASE_INPUTS = re.compile(
+    r"^frontend/android/(.*\.gradle(\.kts)?|gradle\.properties|gradle/.*|.*proguard.*|.*consumer-rules\.pro"
+    r"|.*/AndroidManifest\.xml|.*/src/release/.*|scripts/(apk-|release-version).*)$|^scripts/areas/android\.sh$")
+CONSOLE_BROWSER_IDLE = re.compile(r"^frontend/admin/(screenshots/|docs/|screenshots\.golden$)|^frontend/admin/[^/]*\.md$")
+
+
 @dataclass(frozen=True)
 class Rule:
     """Paths matching `pattern` call for `areas`, in `tiers` only when given."""

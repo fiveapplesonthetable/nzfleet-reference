@@ -232,3 +232,15 @@ Everything an agent needs to take shunt from here to running the fleet, in order
 7. **Cut over one command at a time,** as "How to work" says: nzfleet's command becomes a thin call into shunt once its parity test passes.
 
 Done means: the suite green five times in a row under load, steps 1 to 5 each with a test that fails without the fix, and a day of step 6 with no action nzfleet would not have taken.
+
+## Where shunt stands at 8a6ea0b
+
+Both blockers from 31bd756 are fixed, and so is most of step 4 of the last stretch.
+
+- A failed decide tick now records its time and backs off 1, 2, 4, 8 and 16 times the refresh interval, resetting on success; a tick asked for by hand still runs at once (`sampler/mod.rs`, test in `sampler/tests.rs`).
+- Tidy and `RemoveCheckout` remove only a linked worktree (`is_linked_worktree`), so neither the main checkout nor a standalone clone can be deleted, and removal goes through `git worktree remove` from the owning repository with a check that the directory is gone.
+- `git_stdout` runs through the confined helper with a 30 s timeout, the sampler's HEAD and rev-list reads are confined, and agent branches are pushed without `--no-verify`.
+
+Tests, sandboxed as before: build 3 min 27 s at load ~190; 888 non-daemon and 85 daemon tests passed with none failed; the fleet root unchanged and the checkout clean afterwards, and no daemon process left behind. Nineteen `tacho daemon` processes from earlier versions' test runs (23 Oct and the edf6662 run) were still alive and were stopped.
+
+Still open: steps 3 (refuse a worker without its own worktree), 5 (parity tests), 6 (a day beside nzfleet) and five green runs in a row under load.
