@@ -112,3 +112,13 @@ When the snapshot is refreshed, this section is updated with it.
 4. Build `decide` as one replayable function, then batch and trains, then the watchers.
 
 The plan with sizes and test bars for each step is in the PDF the owner has, "What shunt needs to replace nzfleet".
+
+## Where shunt stands at d2a1aa7 (reviewed 25 Oct, by reading only)
+
+Four commits since 5ba1052, nearly all in one change: an autonomous decide loop in the daemon, strict kill identity, zero timed polls, and the docs brought in line.
+
+Fixed: no kill without identity (item 2), no timed polls in the product for tail and client (item 5), docs match the code (item 6). Mostly fixed: the daemon decides on its own (item 1), no dropped errors (item 3; `let _ =` remains on `libc::kill` in watch.rs and on kit git calls), no per-test waits on time (item 4; `test_util.rs` still asserts `inotify_init1` succeeds). Still open: the proof (item 7), five green runs beside a heavy build and a shadow run next to nzfleet.
+
+New blocker: stall detection in `execute_decide_tick` invents progress samples for a stalled agent (timestamps set back 2800 s and 900 s, made-up CPU ticks) and reads progress from timeline length and token counts with an empty head and no dirty-file count. Stall detection therefore still ignores child processes and commits, and a replayed decision is not what really happened. Smaller: the decide tick opens SQLite every second inside the sampler thread.
+
+No upstream issues, pull requests or replies; discussions are off. Not ready to adopt. Next review: after the stall samples come from real process and git state, and the suite is run five times under load.
