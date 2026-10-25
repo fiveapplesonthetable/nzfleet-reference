@@ -246,3 +246,16 @@ Tests, sandboxed as before: build 3 min 27 s at load ~190; 888 non-daemon and 85
 Still open: steps 3 (refuse a worker without its own worktree), 5 (parity tests), 6 (a day beside nzfleet) and five green runs in a row under load.
 
 A test run of 8a6ea0b left a `yes` burner from the starve watch running for nine hours, reparented to init, at a full core (found 25 Oct at load 176). Before cutover, a starve test must reap its burner's process group in every exit path, and the suite must end with no `yes` whose environment carries `TACHO_STARVE=1`; add that check to the "no process left behind" assertion.
+
+## Where shunt stands at 0aa4ecd
+
+Step 3 is done at spawn: `fleet/session.rs` `spawn_worker_in_dir` refuses a worker whose directory is not its own linked worktree, holds the task and tells the owner before anything runs, and the test (a `touch` provider whose marker must never appear) fails without the check. Resume (`deliver_tell_action`) and the decide-time sweep (`main_checkout_workers`) check too but have no test. The backoff is capped at 15 times the refresh interval, with a test of the exact tick times.
+
+Most of step 5 arrived as helpers that only their own tests call: `land/shots.rs` (`shots_fix_verdict`, `classify_moved_goldens`), `watch/guard.rs` (loosened limits, vague waits, time-based tests in a diff), `ops/kit.rs` (UTC migration names), `ops/config.rs` (`check_root_disk`, the runner tmp drop-in) and `verify/areas.rs` (costly-area and related-test selection). Each still has to be called from the path nzfleet uses it on, with a test through that path: shots on the merged train tree, guards in the pre-push and worker hooks, migrations from `kit`, the root-disk check in the tick, selection in the batch planner compared case by case with nzfleet's `areas.py`. Train head-move refusal, owner mail and redaction, the stall watch, and runner pool setup, prune and warm are not in this commit at all. The leaked starve burner is not addressed.
+
+New in this commit and to settle before running beside nzfleet:
+
+- `exec/mod.rs` `SuperviseAction::Escalate` now SIGTERMs the worker and holds the task on every escalation, ordinary stalls included. nzfleet escalates a stall by telling the owner, not by killing. Kill only a worker found in the main checkout, and signal its process group so its children go too.
+- `resolves_to_main_checkout` treats any directory that directly contains a repository as the main checkout, which together with the kill above can stop a live worker under a holder directory. Compare against the fleet's recorded main checkout path instead.
+- The worktree provisioning fallback runs from whatever checkout the current directory is in; it must refuse outside the fleet root.
+- The step-3 test reaches `notify_owner_command`; tests must not reach a real mail hook.
