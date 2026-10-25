@@ -259,3 +259,5 @@ New in this commit and to settle before running beside nzfleet:
 - `resolves_to_main_checkout` treats any directory that directly contains a repository as the main checkout, which together with the kill above can stop a live worker under a holder directory. Compare against the fleet's recorded main checkout path instead.
 - The worktree provisioning fallback runs from whatever checkout the current directory is in; it must refuse outside the fleet root.
 - The step-3 test reaches `notify_owner_command`; tests must not reach a real mail hook.
+
+Tests at 0aa4ecd, sandboxed as before at load about 60: build 72 s; 919 non-daemon and 88 daemon tests passed, none failed; the fleet root and the shunt checkout unchanged; no daemon and no `yes` burner left after this run. One clean run is not the five in a row under load that done requires, and the burner leak was seen on an earlier run, so its check belongs in the suite rather than in this script.
