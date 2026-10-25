@@ -192,3 +192,21 @@ Four of six are fixed or close. What stops it: a git bug that hit this host duri
 - No new credential path: `gh` uses ambient auth and bodies are scrubbed; `TACHO_NOTIFY` is the one `sh -c` (`plugin.rs:902`).
 
 Next review once git refuses a directory whose toplevel is not itself, the rescue-less removals go, merging is off by config, and the suite is green five times under load in ten minutes.
+
+## Where shunt stands at 31bd756
+
+Ready with two blockers. All four items left open at a4f672c are fixed in code, and each has a test that fails without the fix.
+
+- Git is confined to the worktree. `run_git_in_worktree` (`sampler/worktree.rs`) requires `dir/.git`, sets `GIT_CEILING_DIRECTORIES` to the parent and refuses unless `--show-toplevel` is the directory itself; observe, tidy and the tree snapshot all go through that gate, removal refuses a non-toplevel directory, and a retired tree whose state is unknown counts as needing rescue. Left over: `git_stdout` and `git worktree remove` have no timeout, and the sampler's read-only HEAD reads are unconfined but run with `--no-optional-locks` and a 2 s kill.
+- Force pushes lease on the observed head: `shape.rs` reads the remote head with `ls-remote` at replay time, refuses an empty one, and moves the local branch only after the push succeeds. `kit/pr.rs` still pushes agent branches with `--no-verify`.
+- A failed notification fails the tick and reverts the sent-marker, so the next tick retries, and the daemon tick now reaches the forge.
+- Merging is off by default. `merge_pr` refuses without `allow_merge`, and only `tacho land` with `TACHO_LAND_MERGE=1` or a config flag (default false) turns it on.
+
+Blockers:
+
+- A failed tick never records its decide time, so `decide_due` fires on every 2 s sampler pass instead of every 60 s. A forge outage now fails the tick, so an outage becomes a hot loop of gh calls with 15 s timeouts. It needs backoff.
+- A recorded worktree path that is the main checkout passes `is_git_checkout`, and once idle it could be rescued and deleted. Only a live or held path protects it.
+
+Tests, sandboxed with `TACHO_HOME` and `TACHO_RUNTIME` in a scratch directory and a watch on every git process the run started: build 1 min 35 s; 888 non-daemon tests and 84 daemon tests passed with none failed, at load ~150 on 36 CPUs. No git ran outside the scratch directory and the checkout, and the fleet root was unchanged afterwards. The daemon tests now leave no process behind; three `tacho daemon` processes left by an earlier version's suite had kept running for two days and were stopped by hand.
+
+Next review once a failed tick backs off and the main checkout can never be a removal target.
