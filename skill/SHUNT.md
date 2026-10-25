@@ -210,3 +210,25 @@ Blockers:
 Tests, sandboxed with `TACHO_HOME` and `TACHO_RUNTIME` in a scratch directory and a watch on every git process the run started: build 1 min 35 s; 888 non-daemon tests and 84 daemon tests passed with none failed, at load ~150 on 36 CPUs. No git ran outside the scratch directory and the checkout, and the fleet root was unchanged afterwards. Three `tacho daemon` processes left by an earlier version's suite had kept running for two days and were stopped by hand.
 
 Next review once a failed tick backs off and the main checkout can never be a removal target.
+
+## The last stretch, from 31bd756
+
+Everything an agent needs to take shunt from here to running the fleet, in order.
+
+1. **Back off a failed tick.** Record the decide time on failure too, and wait 60 s, then 2, 4 and up to 15 minutes after each consecutive failure; reset on success. Test: a forge that fails every call makes the sampler run decide once per backoff step, not once per 2 s pass.
+2. **Never remove the main checkout.** A recorded worktree path that is the repository's main checkout, or holds it, is refused by tidy and by `RemoveCheckout` whatever its state. Test: record the main checkout as a retired worktree and run tidy; it survives with its index and untracked files intact.
+3. **Refuse a worker that has no worktree of its own.** On 25 Oct an nzfleet worker was started with the main checkout as its directory and edited it in place, on a commit a day old with no branch, beside other workers. Shunt starts every worker in its own worktree on a named branch off fresh main, and a worker whose directory resolves to the main checkout is stopped with a page. Test: start a worker whose directory is the main checkout; it never runs.
+4. **Bound the residual git calls.** `git_stdout` and `git worktree remove` get the same kill timeout as the tree snapshot, and `kit/pr.rs` stops pushing agent branches with `--no-verify`.
+5. **Prove parity for what was never reviewed.** Shunt already has provider `tell`, bisect, train compile and area selection. Write a parity test against these nzfleet behaviours before trusting it with them:
+   - the train refuses its result when main or any member's head moves while checks run (`premerge.py`, `trainrun.py`);
+   - screenshots are redrawn on the merged tree, only touched screens committed, a golden-list move fails (`shots.py`, `pixels.py`);
+   - the owner hears every ready train as one merge command, and every stop, stall and red main, by mail with redaction (`owner.py`, `mail.py`, `redact.py`);
+   - the stall watch counts child processes, commits and file changes (`progress.py`, `supervise.py`);
+   - the runner pool is set up, pruned and kept warm from repository config (`setup.py`, `warm.py`, `janitor.py`);
+   - the guards: no loosened limits, no vague waits, no time-based tests (`guard.py`);
+   - migrations are named by the UTC second (`migrations.py`);
+   - every temporary file goes under the fleet's tmp directory, never `/` (`tmpdirs.py`, `rootdisk.py`).
+6. **Run beside nzfleet.** Shunt drives two real workers for a day while nzfleet keeps the rest, with `TACHO_LAND_MERGE` unset, and its decisions are diffed against nzfleet's for the same ticks. Any action nzfleet would not take is a bug to fix before step 7.
+7. **Cut over one command at a time,** as "How to work" says: nzfleet's command becomes a thin call into shunt once its parity test passes.
+
+Done means: the suite green five times in a row under load, steps 1 to 5 each with a test that fails without the fix, and a day of step 6 with no action nzfleet would not have taken.
