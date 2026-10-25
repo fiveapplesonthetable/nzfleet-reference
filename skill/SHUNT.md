@@ -207,6 +207,6 @@ Blockers:
 - A failed tick never records its decide time, so `decide_due` fires on every 2 s sampler pass instead of every 60 s. A forge outage now fails the tick, so an outage becomes a hot loop of gh calls with 15 s timeouts. It needs backoff.
 - A recorded worktree path that is the main checkout passes `is_git_checkout`, and once idle it could be rescued and deleted. Only a live or held path protects it.
 
-Tests, sandboxed with `TACHO_HOME` and `TACHO_RUNTIME` in a scratch directory and a watch on every git process the run started: build 1 min 35 s; 888 non-daemon tests and 84 daemon tests passed with none failed, at load ~150 on 36 CPUs. No git ran outside the scratch directory and the checkout, and the fleet root was unchanged afterwards. The daemon tests now leave no process behind; three `tacho daemon` processes left by an earlier version's suite had kept running for two days and were stopped by hand.
+Tests, sandboxed with `TACHO_HOME` and `TACHO_RUNTIME` in a scratch directory and a watch on every git process the run started: build 1 min 35 s; 888 non-daemon tests and 84 daemon tests passed with none failed, at load ~150 on 36 CPUs. No git ran outside the scratch directory and the checkout, and the fleet root was unchanged afterwards. Three `tacho daemon` processes left by an earlier version's suite had kept running for two days and were stopped by hand.
 
 Next review once a failed tick backs off and the main checkout can never be a removal target.
