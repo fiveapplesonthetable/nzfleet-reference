@@ -122,3 +122,42 @@ Fixed: no kill without identity (item 2), no timed polls in the product for tail
 New blocker: stall detection in `execute_decide_tick` invents progress samples for a stalled agent (timestamps set back 2800 s and 900 s, made-up CPU ticks) and reads progress from timeline length and token counts with an empty head and no dirty-file count. Stall detection therefore still ignores child processes and commits, and a replayed decision is not what really happened. Smaller: the decide tick opens SQLite every second inside the sampler thread.
 
 No upstream issues, pull requests or replies; discussions are off. Not ready to adopt. Next review: after the stall samples come from real process and git state, and the suite is run five times under load.
+
+### Where shunt stands at edf6662 (reviewed 25 Oct, built and tested)
+
+
+Read against the d2a1aa7 verdict, the nzfleet reference notes, and nzfleet as it runs today. Built with `cargo +1.98 build --workspace --tests --offline` (1 min 57 s) and run with `cargo +1.98 test --workspace --no-fail-fast --offline`, no `TACHO_*` set, at load 90 to 107. Nothing left the machine. Logs: kept locally.
+
+### Verdict: not ready
+
+The one blocker named at d2a1aa7 is untouched, and reading the daemon's new executor path turned up a data-loss path that the earlier reviews did not reach.
+
+### Blockers, ranked
+
+1. **Stall samples are still fabricated.** `crates/tacho-daemon/src/fleet.rs:1143-1183` is byte-for-byte what d2a1aa7 had: an agent the recorder flags gets invented history at `now - 2_800` and `now - 900` with `cpu_ticks` 0, 1, 2, which forces `verdict` (`watch/legacy.rs:254`) to `Stalled`; every other agent's "CPU" is `tokens_in + tokens_out` and its "log bytes" is `timeline.len() * 64`. Child processes never count, so a worker waiting on a long check is still stalled by construction, and the recorded tick replays a world that did not exist. The real process-tree sampler exists (`watch/sample.rs`, `tree_cpu` used by the CLI at `fleet/watch.rs:381-416`) but the daemon does not call it. The commit message does not claim this was fixed; nothing in the diff touches it.
+
+2. **The daemon deletes worktrees it has declared clean without looking.** `fleet.rs:1219-1220` hard-codes `dirty: false, unpushed_commits: 0` for every worktree, and `age_secs` is `now - created_at` (1210), not idle time. `decide_tidy` (`watch/legacy_ops.rs:226`) therefore never asks for a rescue, and the executor (`fleet.rs:1266-1278`) matches `RemoveTree { path, because, .. }`, ignoring `rescue` anyway, then runs `git worktree remove --force` and `remove_dir_all` (1042, 1063). Any worktree older than an hour whose agent pid is gone (crashed, stopped, held) loses uncommitted and unpushed work. The CLI `tidy` has the rescue ref; the daemon, now the authoritative executor, does not.
+
+3. **A force push whose result is thrown away, then state that says it worked.** `fleet/shape.rs:237-244`: `let _ = git push --force-with-lease …`, followed by `store.mutate` setting the PR head to `new_head` and `mergeable = MERGEABLE`. The lease is the local tracking ref, not the head observed from the API as nzfleet's `shape.py:62` pins it, so a push between the fetch and the replay is overwritten. Operator-triggered only (`tacho replay <pr>`, 384), but it is the exact "force-push over someone's work" case.
+
+4. **Owner notifications go nowhere.** `plan.owner_notifications` are only written as `notify_owner` rows (`fleet/watch.rs:829`); `ops.rs:notify_owner` has no caller; `LandActionKind::SendMail` and `MergePr` have no hand in `tacho-cli` or `tacho-daemon`; `ops/watchdog.rs` composes the "is down" issue but no code calls `gh issue` (`Command::new("gh")` exists only in `kit/start.rs:118` and `kit/pr.rs:471`). nzfleet mails merge commands, opens "main is red" and "nzfleet is down", and lands a train on command. shunt decides all of it and does none.
+
+5. **Tests still depend on a free inotify instance, and under load they fail.** 939 passed, 21 failed in 2 min 45 s. Sixteen failures are `inotify_init1 … Too many open files` (this host has 124 of 128 instances in use): `test_util.rs:14` and `tacho-e2e/src/lib.rs:600` now print a better message and panic, which is the "reworded" fix. `snapshots_under_load` died on the product's 2 s `SEND_TIMEOUT` at load 100. Three kit tests fail on bare `assert!(out.status.success())` with no stderr shown (`kit_and_fleet_tests.rs:256,744`, `kit/tests.rs:695`), so their cause cannot be read from the log. The e2e tests gated on `trace_processor_shell` (`queries.rs:128`, `test8:60`, `test7`, `tacho-system/tests/integration.rs:132`) pass silently when it is absent, which is a pass without the code they cover.
+
+6. **Screenshots: goldens are auto-refreshed.** `verify/verdict.rs:209-250` (R23) refreshes goldens when a single PR fails only in pixel areas. nzela's rule is the reverse: the golden set is strict, the rest is redrawn and reported. The `tacho pr` stray-shot refusal (`kit/pr.rs:197`) does match nzfleet.
+
+### Improved since d2a1aa7
+
+- Decide runs on committed events plus a 60 s refresh, serialised and deduplicated (`fleet.rs:1067-1100`, `sampler/mod.rs:529`), replacing the per-second SQLite open.
+- Burner kills go through a starttime-checked pidfd and refuse without identity (`fleet.rs:1378-1430`); `signal_group_and_leader` returns errors instead of `let _ = libc::kill`.
+- Supervise resume classifies the recorded process and tells a live agent rather than respawning beside it.
+- `main-broken` batches have a lifecycle (`verify/unbreak.rs`); private `TMPDIR` for jobs, provisioners and burners; warm cache layout in config; fork-sync removed; about 60 parity tests over pure functions, which are real tests.
+- Batch areas run under `systemd-run … AllowedCPUs/MemoryMax` plus `taskset` (`ci_runner.rs:203-230`), at parity with `areas.py:315`.
+
+### What stays at parity
+
+Provider `start/resume/tell/stop/cost` (`dispatch/provider.rs:66-117`); bisect (`verify/bisect.rs`); train compile in a scratch worktree, default `cargo check --workspace` (`train.rs:752`); area selection by configured path rules with fail-closed unplaced files (`areas.rs:44`); scrubber on by default.
+
+### Migration path, when the blockers are gone
+
+Not yet. Items 1 and 2 are the daemon's two hands with the worst failure modes and both run unattended; 4 means the owner would hear nothing. Next review after the daemon samples real process trees and git state, tidy rescues before removal, and the suite is green five times under load with every skip turned into a failure or a listed exclusion.
