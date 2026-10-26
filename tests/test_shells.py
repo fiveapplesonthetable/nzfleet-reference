@@ -259,6 +259,17 @@ class Branch(unittest.TestCase):
         git(self.wt, "add", "-A")
         git(self.wt, "commit", "-qm", "A shot\n\nBecause.")
 
+    def test_a_worker_pull_request_is_opened_as_a_draft(self):
+        self.commit()
+        self.prove()
+        with mock.patch.object(world, "gh", return_value="https://github.com/nzela-org/nzela/pull/7\n") as gh, \
+                mock.patch.object(openpr, "_fork_owner", return_value="someone"), \
+                mock.patch.object(world, "gh_json", return_value=[]), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(openpr.pr("A line is now two", "Because.", dry_run=False), 0)
+        created = [c.args for c in gh.call_args_list if c.args[:2] == ("pr", "create")]
+        self.assertEqual(len(created), 1)
+        self.assertIn("--draft", created[0])
+
     def test_a_screenshot_no_changed_screen_draws_is_refused_and_named(self):
         self.commit()
         self.commit_shot("05-transfer-detail-waiting.png")

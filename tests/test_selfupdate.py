@@ -198,7 +198,7 @@ class TheRuleIsWrittenTheSameEverywhere(unittest.TestCase):
 
 
 class AScreenshotChangeIsNeverReadyWithoutItsChecks(unittest.TestCase):
-    SHOTS_PR = [".github/workflows/shots.yaml", "scripts/shot-report.sh", "scripts/shot-report-test.sh"]
+    SHOTS_PR = [".github/workflows/shots.yaml", "tools/nzfleet/shots/shot-report.sh", "tools/nzfleet/shots/shot-report-test.sh"]
 
     def test_a_pr_that_changes_the_screenshot_report_requires_both_frontends(self):
         areas = plan.check_areas(frozenset({"deploy", "secrets"}), self.SHOTS_PR, frozenset())
@@ -213,7 +213,7 @@ class AScreenshotChangeIsNeverReadyWithoutItsChecks(unittest.TestCase):
         self.assertNotIn("android", areas)
 
     def test_an_unrelated_workflow_change_asks_for_no_frontend_checks(self):
-        areas = plan.check_areas(frozenset({"deploy"}), [".github/workflows/ci.yaml.bak", "scripts/release.sh"], frozenset())
+        areas = plan.check_areas(frozenset({"deploy"}), [".github/workflows/ci.yaml.bak", "tools/nzfleet/release/release.sh"], frozenset())
         self.assertEqual(areas, {"deploy"})
 
 

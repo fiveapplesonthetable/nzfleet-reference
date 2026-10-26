@@ -141,13 +141,17 @@ class ChangesToHowChecksRun(unittest.TestCase):
         got = trainpr.solo_ci([pr(1, "scripts/other-tool.sh"), pr(2, "crates/a.rs")])
         self.assertEqual([c.number for c in got], [1, 2])
 
-    def test_nothing_lands_until_a_main_run_has_passed_after_the_change(self):
+    def test_an_unproven_pipeline_change_requires_a_full_batch_for_the_repair(self):
         ancestors = {("c1", "m1"), ("c1", "m2")}
         is_ancestor = lambda a, b: (a, b) in ancestors
-        self.assertIn("nothing else lands", trainpr.ci_proof_pending("c1", {"sha": "m0", "ok": True}, is_ancestor))
-        self.assertIn("nothing else lands", trainpr.ci_proof_pending("c1", {"sha": "m1", "ok": False}, is_ancestor))
-        self.assertEqual(trainpr.ci_proof_pending("c1", {"sha": "m2", "ok": True}, is_ancestor), "")
+        required = trainpr.ci_proof_areas("c1", {"sha": "m1", "ok": False}, is_ancestor)
+        self.assertIn("rust", required)
+        self.assertIn("android-release", required)
+        self.assertIn("console-browser", required)
+        self.assertEqual(trainpr.ci_proof_areas("c1", {"sha": "m0", "ok": True}, is_ancestor), required)
+        self.assertEqual(trainpr.ci_proof_areas("c1", {"sha": "m2", "ok": True}, is_ancestor), frozenset())
+        self.assertEqual(trainpr.ci_proof_areas("", {"sha": "m1", "ok": False}, is_ancestor), frozenset())
 
-    def test_the_letter_of_such_a_train_says_one_main_run_must_pass_first(self):
+    def test_the_letter_explains_why_following_trains_need_full_proof(self):
         _, text = trainpr.letter(900, [2], [], [], "nzela-org/nzela", "a" * 40, ci=True)
         self.assertIn(trainpr.CI_NOTICE, text)

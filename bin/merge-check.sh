@@ -157,6 +157,9 @@ if ! "$fleet/bin/shallow-checkout.sh" "$wt" "$check_wt" "$(git -C "$repo" remote
     exit 0
 fi
 cd "$check_wt" || exit 0
+# ci fetches the base in a step of its own before checks.sh; the areas here run checks.sh alone.
+main_sha=$(git -C "$repo" rev-parse upstream/main)
+git fetch -q --depth=1 --no-tags "$wt" "$main_sha" || { result 90 "$merged" "$skipped" "fetch of the base commit failed"; exit 0; }
 export GITHUB_SHA
 GITHUB_SHA=$(git rev-parse HEAD)
 
@@ -212,7 +215,7 @@ sccache=${NZFLEET_SCCACHE-$home/sccache} sccache_bin=""
 # The workflow is the merged tree's own, so a PR that changes a job is checked by the job it wrote.
 python3 -c 'import os; cpus = sorted(os.sched_getaffinity(0)); print(f"area CPU affinity: {len(cpus)} CPUs ({cpus})")'
 PYTHONPATH=$fleet python3 -m nzfleet.areas --workflow .github/workflows/ci.yaml --worktree "$check_wt" \
-    --name "nzf-$name" --target "$target" --main "$(git -C "$repo" rev-parse upstream/main)" \
+    --name "nzf-$name" --target "$target" --main "$main_sha" \
     --cache "${NZFLEET_CACHE:-$home/cache}" --slot "${NZFLEET_GRADLE_SLOT:-}" \
     --sccache "$sccache" --sccache-bin "$sccache_bin" --stats "$run/stats.json" ${areas//,/ }
 rc=$?

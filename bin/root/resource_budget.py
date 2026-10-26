@@ -64,6 +64,18 @@ def job_section(workflow, job):
     return match[1]
 
 
+def job_needs(workflow, job):
+    match = re.search(r"(?m)^    needs: (.+)$", job_section(workflow, job))
+    if not match:
+        raise ValueError(f"{job} has no declared prerequisites")
+    value = match[1].strip()
+    names = value[1:-1].split(",") if value.startswith("[") and value.endswith("]") else [value]
+    needs = {name.strip() for name in names}
+    if not needs or any(not re.fullmatch(r"[a-z][a-z-]*", name) for name in needs):
+        raise ValueError(f"{job} has invalid prerequisites")
+    return needs
+
+
 def job_cpus(workflow, job):
     section = job_section(workflow, job)
     container = section.split("    services:", 1)[0].split("    steps:", 1)[0]
@@ -73,8 +85,8 @@ def job_cpus(workflow, job):
     return int(match[1])
 
 
-def android_cpus(workflow):
-    section = job_section(workflow, "android")
+def android_cpus(workflow, job="android-compile"):
+    section = job_section(workflow, job)
     processor = re.search(r"ActiveProcessorCount=(\d+)", section)
     workers = re.search(r"org.gradle.workers.max=(\d+)", section)
     if not processor or not workers or processor[1] != workers[1]:
@@ -82,9 +94,17 @@ def android_cpus(workflow):
     return int(processor[1])
 
 
+def shard_cpus(workflow):
+    """The CPUs the Android test shards declare together; they run at once, after the build job has finished."""
+    shards = re.search(r"shard: \[([\d, ]+)\]", job_section(workflow, "android-shard"))
+    if not shards:
+        raise ValueError("android-shard declares no shard list")
+    return android_cpus(workflow, "android-shard") * len(shards[1].split(","))
+
+
 def heaviest_job(workflow):
     """The CPUs the largest single job declares; no runner needs more than this."""
-    containers = ("check", "compat", "e2e", "console", "console-browser")
+    containers = ("check", "rust-archive", "rust-tests", "compat", "e2e", "console", "console-browser")
     return max([job_cpus(workflow, job) for job in containers] + [android_cpus(workflow)])
 
 
@@ -133,7 +153,7 @@ def validate(host, trusted_affinity, shared_affinity, workflow, quotas, reserves
     if "needs: select" not in image_section or "needs: [select, android]" in image_section:
         raise ValueError("release image must run in parallel with Android")
     device_section = job_section(workflow, "android-device")
-    if ("needs: [select, check, compat, e2e, console, console-browser, android, image]" not in device_section
+    if ("needs: [select, check, rust-archive, rust-tests, compat, e2e, console, console-browser, android, image]" not in device_section
             or "!cancelled()" not in device_section
             or "ActiveProcessorCount=4" not in device_section
             or "org.gradle.workers.max=4" not in device_section):
@@ -161,9 +181,19 @@ def validate(host, trusted_affinity, shared_affinity, workflow, quotas, reserves
         raise ValueError("console browser workers must come from the container's CPU quota, not be pinned")
     # The suite's four browsers are a cgroup-capped burst that starts after the static
     # job; they may take a third of the slice and are not summed with the rest.
-    peak = rust_peak + sum(rust[1:]) + services + console_static + light + android + image
+    release_needs = job_needs(workflow, "android-release")
+    release_predecessors = sum(job_cpus(workflow, job) for job in ("contract", "site") if job in release_needs)
+    peak = rust_peak + sum(rust[1:]) + services + console_static + light - release_predecessors + android + android_cpus(workflow, "android-release") + image
     if peak > trusted:
         raise ValueError(f"CI jobs, Android, image and Postgres need {peak} CPUs, trusted parent has {trusted}")
+    if android_cpus(workflow, "android") > android:
+        raise ValueError("the job that joins the Android shards must not outweigh the job that builds")
+    compat_and_postgres = 0
+    if "compat" in job_needs(workflow, "android-shard"):
+        compat_and_postgres = rust[1] + postgres_cpus(workflow, "compat")
+    shards = peak - android - (light - release_predecessors) - console_static - compat_and_postgres + shard_cpus(workflow)
+    if shards > trusted:
+        raise ValueError(f"the Android shards beside the jobs still running need {shards} CPUs, trusted parent has {trusted}")
     if console * 3 > trusted:
         raise ValueError(f"console browser cap {console} exceeds a third of the trusted parent {trusted}")
     return trusted, owner, pr, batch, agent, tuple(rust), console, console_static, android, image, services, light

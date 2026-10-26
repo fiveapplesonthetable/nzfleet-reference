@@ -10,6 +10,14 @@ from nzfleet import agents, cli, config, janitor, machine, plan, state, tick, wo
 
 
 class TickMaintenance(unittest.TestCase):
+    def setUp(self):
+        home = tempfile.TemporaryDirectory()
+        self.addCleanup(home.cleanup)
+        for name, value in (("PATH", "state.json"), ("LOCK", "state.lock")):
+            patch = mock.patch.object(state, name, os.path.join(home.name, value))
+            patch.start()
+            self.addCleanup(patch.stop)
+
     def test_a_prune_that_hangs_does_not_block_the_tick(self):
         with mock.patch.object(tick.machine, "prune_if_low", side_effect=TimeoutError("hung"), create=True) as prune, \
                 mock.patch.object(tick, "tidy_machine"), mock.patch.object(agents, "reap", return_value=[]), \

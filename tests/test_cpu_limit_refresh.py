@@ -7,9 +7,13 @@ import unittest
 from unittest import mock
 
 from nzfleet import config, machine
+from tests.isolated_config import isolate
 
 
 class TheCpuLimitRefresh(unittest.TestCase):
+    def setUp(self):
+        isolate(self)
+
     def busy_at(self, one: float, five: float) -> bool:
         with mock.patch.object(machine.config, "MAX_CPU_PERCENT", 90.0), \
                 mock.patch.object(machine, "cpu_percent", return_value=None), \

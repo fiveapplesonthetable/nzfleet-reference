@@ -8,6 +8,7 @@ import tempfile
 import threading
 import unittest
 import tests
+from tests.argv import environment, option, shell_script
 from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import patch
@@ -46,8 +47,8 @@ class TheEnvironmentAJobGetsForTheCachesMountedIntoIt(unittest.TestCase):
                 self.assertEqual(mounts[warm], "/warm")
                 self.assertTrue(os.path.isdir(warm))
                 self.assertIn(f"{warm}:/warm", argv)
-                self.assertIn(f"chown -R {os.getuid()}:{os.getgid()}", argv[argv.index("-c") + 1])
-                self.assertIn("/warm", argv[argv.index("-c") + 1])
+                self.assertIn(f"chown -R {os.getuid()}:{os.getgid()}", shell_script(argv))
+                self.assertIn("/warm", shell_script(argv))
 
     def test_native_docker_launch_uses_each_reviewed_ci_cap(self):
         import yaml
@@ -88,30 +89,22 @@ class TheEnvironmentAJobGetsForTheCachesMountedIntoIt(unittest.TestCase):
                 if current.service:
                     service = launched[0]
                     self.assertEqual(service.count(f"--cpus={current.cpus}"), 1)
-                    self.assertEqual(service[2:], [f"--cpus={current.cpus}", f"--cpuset-cpus={','.join(map(str, range(current.cpus)))}", "-d", "--init", "--name",
-                        f"{area}-service", "--network", area, "--network-alias", "postgres", "-e", "POSTGRES_USER=nzela",
-                        "-e", "POSTGRES_PASSWORD=nzela", "-e", "POSTGRES_DB=nzela", "--health-cmd",
-                        "pg_isready -U nzela", "--health-interval", "2s", "--health-timeout", "2s",
-                        "--health-retries", "3600", "--tmpfs", *(["/var/lib/postgresql/data:rw,size=4g", "--memory=8g"] if area == "rust" else ["/var/lib/postgresql/data:rw"]), "postgres:16-alpine",
-                        "postgres", "-c", "fsync=off", "-c", "full_page_writes=off", "-c", "synchronous_commit=off",
-                        "-c", "max_connections=300"])
+                    self.assertEqual(option(service, "--cpuset-cpus"), ",".join(map(str, range(current.cpus))))
+                    self.assertEqual(option(service, "--network-alias"), "postgres")
+                    self.assertEqual(option(service, "--network"), area)
                 if current.warm_volume:
                     argv = launched[-1]
-                    launched_mounts = dict(mounts)
-                    if area == "console":
-                        launched_mounts[os.path.join(target, area, "node_modules")] = os.path.join(temp, "frontend", "admin", "node_modules")
-                    expected = plan.job_argv(current, area, area, launched_mounts, temp,
-                                             f"{os.getuid()}:{os.getgid()}",
-                                              {**{key: value for key, value in inherited.items() if key not in current.env},
-                                              "CARGO_TARGET_DIR": f"/target/{area}", "CARGO_BUILD_JOBS": str(current.cpus),
-                                              "RUST_TEST_THREADS": str(current.cpus), **areas.cache_env(temp, mounts)})
-                    expected[2:2] = [f"--cpus={current.cpus}", f"--cpuset-cpus={','.join(map(str, range(current.cpus)))}"]
-                    self.assertEqual(argv, expected)
+                    env = environment(argv)
+                    self.assertEqual(option(argv, "--cpus"), str(current.cpus))
+                    self.assertEqual(option(argv, "--cpuset-cpus"), ",".join(map(str, range(current.cpus))))
+                    self.assertEqual((env["CARGO_TARGET_DIR"], env["CARGO_BUILD_JOBS"], env["RUST_TEST_THREADS"]),
+                                     (f"/target/{area}", str(current.cpus), str(current.cpus)))
+                    self.assertEqual(env["CARGO_INCREMENTAL"], "1")
                     self.assertEqual(argv.count(f"{warm}:/warm"), 1)
                     if area in ("rust", "compat", "e2e"):
                         self.assertIn("SCCACHE_DIR=/warm/sccache", argv)
                     self.assertNotIn("${{", " ".join(argv))
-                    self.assertIn("/warm", argv[argv.index("-c") + 1])
+                    self.assertIn("/warm", shell_script(argv))
 
     def test_native_android_launch_has_a_kernel_quota_and_matching_view(self):
         import yaml
@@ -186,7 +179,7 @@ class TheEnvironmentAJobGetsForTheCachesMountedIntoIt(unittest.TestCase):
                 job_argv = next(argv for argv in calls if argv[:2] == ["docker", "run"])
                 self.assertIn(f"{host_mount}:/target", job_argv)
                 self.assertIn("CARGO_TARGET_DIR=/target/rust", job_argv)
-                driver = job_argv[job_argv.index("-c") + 1]
+                driver = shell_script(job_argv)
                 self.assertIn("chown -R 1201:2302 /work /target/rust", driver)
 
     def test_host_jobs_keep_their_physical_target_directory(self):

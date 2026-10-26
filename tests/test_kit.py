@@ -41,23 +41,29 @@ class Mapping(unittest.TestCase):
         self.assertEqual(check.needs, "db")
 
     def test_workflow_shell_checks_and_mapping_references_have_focused_proofs(self):
-        files = ["scripts/workflow-shells-test.sh", "scripts/workflow-shells-diagnostics-test.sh",
+        files = ["tools/nzfleet/deploycheck/workflow-shells-test.sh", "tools/nzfleet/deploycheck/workflow-shells-diagnostics-test.sh",
                  "formal/tla/MAPPING.md"]
         checks = plan.proof_plan(files, TRACKED + files, "BASE")
         commands = [c.cmd for c in checks]
         self.assertNotIn(("scripts/checks.sh", "all"), commands)
-        self.assertIn(("scripts/workflow-shells-test.sh",), commands)
-        self.assertIn(("scripts/workflow-shells-diagnostics-test.sh",), commands)
-        self.assertIn(("python3", "scripts/tla-mapping-refs.py"), commands)
+        self.assertIn(("tools/nzfleet/deploycheck/workflow-shells-test.sh",), commands)
+        self.assertIn(("tools/nzfleet/deploycheck/workflow-shells-diagnostics-test.sh",), commands)
+        self.assertIn(("python3", "tools/nzfleet/deploycheck/tla-mapping-refs.py"), commands)
 
     def test_a_shell_checker_change_also_runs_its_diagnostic_regressions(self):
-        checks = plan.proof_plan(["scripts/workflow-shells-test.sh"], TRACKED, "BASE")
-        self.assertIn(("scripts/workflow-shells-diagnostics-test.sh",), [c.cmd for c in checks])
+        checks = plan.proof_plan(["tools/nzfleet/deploycheck/workflow-shells-test.sh"], TRACKED, "BASE")
+        self.assertIn(("tools/nzfleet/deploycheck/workflow-shells-diagnostics-test.sh",), [c.cmd for c in checks])
 
     def test_the_deploy_runner_is_proved_by_its_area(self):
         checks = plan.proof_plan(["scripts/areas/deploy.sh"], TRACKED, "BASE")
         self.assertIn(("scripts/checks.sh", "deploy"), [c.cmd for c in checks])
         self.assertNotIn(("scripts/checks.sh", "all"), [c.cmd for c in checks])
+
+    def test_the_nightly_money_path_change_runs_its_harness_regression(self):
+        files = [".github/workflows/fuzz.yaml", "fuzz/money-paths.sh", "fuzz/nightly-test.sh"]
+        commands = [check.cmd for check in plan.proof_plan(files, TRACKED + files, "BASE")]
+        self.assertIn(("bash", "fuzz/nightly-test.sh"), commands)
+        self.assertNotIn(("scripts/checks.sh", "all"), commands)
 
     def test_proof_planner_changes_run_the_planner_test_modules(self):
         files = ["tools/nzfleet/nzfleet/plan.py", "tools/nzfleet/tests/test_kit.py"]

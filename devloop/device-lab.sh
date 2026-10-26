@@ -25,8 +25,8 @@ set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.." || exit 1
 ROOT="$PWD"
-# shellcheck source=lib/stack.sh
-. scripts/lib/stack.sh
+# shellcheck source=../../../sim/lib/stack.sh
+. sim/lib/stack.sh
 
 PORT="${DEVICE_LAB_PORT:-8080}"
 API_PORT=$((PORT + 1))
@@ -199,7 +199,7 @@ sweep_once() {
 # operator, a funded payout pool and one verified sender. It is made by the
 # service's own routes so that nothing in it is a state the service cannot reach.
 stamp() {
-    cat crates/*/migrations/*.sql deploy/seed-dev.sql tools/nzfleet/devloop/device-lab.sh scripts/lib/stack.sh | sha256sum | cut -d' ' -f1
+    cat crates/*/migrations/*.sql deploy/seed-dev.sql tools/nzfleet/devloop/device-lab.sh sim/lib/stack.sh | sha256sum | cut -d' ' -f1
 }
 
 template_current() {

@@ -18,14 +18,14 @@ class TrainWorld(unittest.TestCase):
         self.world = World().__enter__()
         self.addCleanup(self.world.__exit__, None, None, None)
         w = self.world
-        self.opened, self.batches, self.broken = [], [], set()
+        self.opened, self.batches, self.batch_areas, self.broken = [], [], [], set()
         self.compiled = []
         for patch in (
                 mock.patch.object(config, "WORK", w.dir),
                 mock.patch.object(trainbuild, "compile_error", side_effect=self.compile_error),
                 mock.patch.object(world, "issue", return_value=None),
                 mock.patch.object(world, "create_pr", side_effect=self.create_pr),
-                mock.patch.object(batch, "start_batch", side_effect=self.batches.append)):
+                mock.patch.object(batch, "start_batch", side_effect=self.start_batch)):
             started = patch.start()
             self.addCleanup(patch.stop)
         w.write(COMPARISON, "base\n")
@@ -35,6 +35,10 @@ class TrainWorld(unittest.TestCase):
     def compile_error(self, tree):
         self.compiled.append(tree)
         return "error[E0425]: cannot find value `x`" if any(os.path.exists(os.path.join(tree, f)) for f in self.broken) else ""
+
+    def start_batch(self, prs, areas=None):
+        self.batches.append(prs)
+        self.batch_areas.append(areas)
 
     def create_pr(self, branch, title, body):
         self.opened.append((branch, title, body))
@@ -320,11 +324,12 @@ class ChangesToHowChecksRunLeaveAlone(TrainWorld):
         self.assertIn(trainpr.CI_NOTICE, self.opened[0][2])
         self.assertTrue(state.read()["train_prs"]["901"]["ci"])
 
-    def test_no_train_forms_while_the_last_pipeline_change_has_no_passing_main_run(self):
+    def test_a_repair_train_forms_while_the_last_pipeline_change_has_no_passing_main_run(self):
         self.world.open_pr(1, {CODE: "one\n"})
         with mock.patch.object(trainrun, "_last_ci_change", return_value="c" * 40):
             self.assertEqual(self.train(1), 0)
-        self.assertEqual(self.opened, [])
+        self.assertEqual(state.read()["train_prs"]["901"]["members"], [1])
+        self.assertTrue(trainpr.ci_proof_areas("c" * 40, {}, world.is_ancestor) <= set(self.batch_areas[0]))
 
 
 class AfterTheTrain(TrainWorld):
@@ -385,6 +390,16 @@ class TheMailWaitsForTheEvidence(TrainWorld):
         w = self.world
         self.assertEqual(self.mails()[0][1].count("gh pr merge 901"), 1)
         self.assertEqual(w.ready, [901])
+
+    def test_an_unproven_pipeline_change_waits_for_a_full_exact_tree_pass_before_mail(self):
+        with state.change() as s:
+            s["main_ci"] = {"sha": "m", "ok": False}
+        with mock.patch.object(trainrun, "_last_ci_change", return_value="c" * 40), \
+                mock.patch.object(world, "is_ancestor", return_value=False):
+            self.assertEqual(self.mails(), [])
+            required = trainpr.ci_proof_areas("c" * 40, {"sha": "m", "ok": False}, world.is_ancestor)
+            self.pass_batch(proved=self.proof(self.TREE, *sorted(required)))
+            self.assertEqual(len(self.mails()), 1)
 
     def test_a_train_is_mailed_only_once(self):
         self.mails()

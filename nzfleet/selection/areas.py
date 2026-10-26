@@ -30,7 +30,7 @@ EVERYTHING = re.compile(
     r"|^\.github/workflows/ci\.yaml$|^\.cargo/|^rust-toolchain(\.toml)?$|^rustfmt\.toml$|^clippy\.toml$"
     r"|^Makefile$|^\.gitmodules$|^tools/nzfleet/nzfleet/areas\.py$")
 
-E2E_INPUTS = (r"^scripts/(e2e|bench)\.sh$|^tools/nzfleet/devloop/|^scripts/lib/|^sim/(e2e|bench|smoke)\.toml$"
+E2E_INPUTS = (r"^sim/(e2e|bench|smoke)\.toml$|^sim/(e2e|bench)\.sh$|^sim/lib/|^tools/nzfleet/devloop/"
               r"|^deploy/seed-dev\.sql$|^crates/[^/]*/migrations/|^crates/nzela-api/src/|^crates/nzela-wire/"
               r"|^frontend/android/app/src/main/java/app/nzela/data/remote/|^Cargo\.lock$")
 
@@ -39,7 +39,7 @@ CONTRACT_INPUTS = (r"^crates/nzela-wire/|^crates/nzela(-platform|-api|-verificat
                    r"|^frontend/android/core/data/src/main/java/app/nzela/data/remote/generated/")
 
 DEPLOY_INPUTS = (r"^deploy/Dockerfile$|^deploy/compose.*\.yaml$"
-                 r"|^tools/nzfleet/runner/|^scripts/(release|drift|backup|backup-test|backup-fresh|offsite-backup)")
+                 r"|^tools/nzfleet/runner/|^sim/(bench-report|perf|test_perf)|^tools/nzfleet/backup/(backup|offsite-backup)|^tools/nzfleet/release/")
 
 
 # What a pull request must build to catch what main would otherwise catch. The release image is built from
@@ -48,10 +48,11 @@ DEPLOY_INPUTS = (r"^deploy/Dockerfile$|^deploy/compose.*\.yaml$"
 # the pictures and prose it only holds. A train carries all three, since main reuses its image.
 IMAGE_INPUTS = re.compile(
     r"^deploy/|^\.dockerignore$|^Cargo\.(toml|lock)$|^crates/[^/]+/Cargo\.toml$|^\.sqlx/|^rust-toolchain(\.toml)?$"
-    r"|^\.cargo/|^scripts/(backup|restore-drill|offsite-restore-check|push-image|reuse-image)")
+    r"|^\.cargo/|^tools/nzfleet/backup/(backup|restore-drill|offsite-restore-check)|^tools/nzfleet/release/(push-image|reuse-image|hand-over|build-release-binary|build-images)")
 ANDROID_RELEASE_INPUTS = re.compile(
     r"^frontend/android/(.*\.gradle(\.kts)?|gradle\.properties|gradle/.*|.*proguard.*|.*consumer-rules\.pro"
-    r"|.*/AndroidManifest\.xml|.*/src/release/.*|scripts/(apk-|release-version).*)$|^scripts/areas/android\.sh$")
+    r"|.*/AndroidManifest\.xml|.*/src/release/.*|scripts/(apk-|release-version).*)$"
+    r"|^scripts/areas/android\.sh$|^\.github/workflows/ci\.yaml$")
 CONSOLE_BROWSER_IDLE = re.compile(r"^frontend/admin/(screenshots/|docs/|screenshots\.golden$)|^frontend/admin/[^/]*\.md$")
 
 
@@ -81,15 +82,24 @@ RULES = (
     _rule(r"^frontend/website/", "site"),
     _rule(r"^frontend/android/", "android"),
     # The release image is built by the pull request run, or on main when none covers the tree.
-    _rule(r"^scripts/(backup|restore-drill|offsite-restore-check)", "image"),
+    _rule(r"^tools/nzfleet/backup/(backup|restore-drill|offsite-restore-check)|^tools/nzfleet/release/(hand-over|build-release-binary)", "image"),
     _rule(r"^deploy/Dockerfile$|^\.dockerignore$", "image", tiers=("change",)),
     _rule(r"^tools/nzfleet/runner/install-", "rust", "fuzz"),
     _rule(DEPLOY_INPUTS, "deploy"),
-    _rule(r"^deploy/terraform/|^\.githooks/", "deploy"),
+    _rule(r"^deploy/terraform/|^\.githooks/|^tools/nzfleet/deploycheck/", "deploy"),
     _rule(r"^scripts/(no-test-sleeps|no-counted-polls)", "deploy", tiers=("change",)),
+    # Every other script belongs to the area whose checks call it; a shared one names each caller.
+    _rule(r"^scripts/(android-|local-android-|no-android-|no-shared-test-state|device\.sh|emulator)", "android"),
+    _rule(r"^scripts/(console-capture-env|no-capture-network-idle|no-vague-console-waits)", "console"),
+    _rule(r"^scripts/(core-boundary|crate-|one-clock|restore-mtimes|rust-|rustc-wrapper|warm-target)", "rust"),
+    _rule(r"^scripts/(emulator|e2e-build|no-wall-clock-waits)", "e2e"),
+    _rule(r"^scripts/(console-capture-env-test|no-wall-clock-waits|step-cap-test|suite-caps)", "deploy", tiers=("change",)),
+    _rule(r"^scripts/(query-validation-cache|record-wire-fixtures)", "compile", tiers=("train",)),
+    _rule(r"^scripts/(query-validation-cache|record-wire-fixtures)", "rust"),
+    _rule(r"^scripts/coverage-floors$", "deploy", tiers=("change",)),
     # Every workflow: which machine a job may ask for is asserted across all of them.
     _rule(r"^\.github/workflows/", "deploy", tiers=("change",)),
-    _rule(r"^docs/book/|^scripts/book", "deploy", tiers=("change",)),
+    _rule(r"^docs/book/|^tools/nzfleet/book/", "deploy", tiers=("change",)),
     _rule(r"^tools/nzfleet/", "fleet", tiers=("change",)),
     _rule(CONTRACT_INPUTS, "contract"),
     _rule(r"^crates/[^/]*/migrations/|^scripts/schema-compat", "compat"),
@@ -105,8 +115,8 @@ PLACED = re.compile(
     r"^(crates|fuzz|frontend/admin|frontend/android|frontend/website|deploy|tools/nzfleet|\.github|\.sqlx|\.githooks"
     r"|\.cargo|\.config)/|^(Cargo\.toml|Cargo\.lock|rust-toolchain(\.toml)?|rustfmt\.toml|clippy\.toml|Makefile"
     r"|\.gitmodules|\.dockerignore)$"
-    r"|^scripts/(e2e\.sh|bench\.sh|restore-drill\.sh|restore-drill-test\.sh|release\.sh"
-    r"|contract\.sh|typeshare\.toml|schema-compat.*|book.*|areas/.*\.sh|offsite-.*)$")
+    r"|^scripts/("
+    r"contract\.sh|typeshare\.toml|schema-compat.*|areas/.*\.sh)$")
 
 
 def select(paths: list, tier: str) -> tuple:

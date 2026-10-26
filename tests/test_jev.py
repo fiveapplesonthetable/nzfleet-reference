@@ -218,5 +218,15 @@ class Reporting(unittest.TestCase):
         self.assertEqual((row["calls"], row["compared"], row["agreed"], row["floor_misses"], row["stops"], row["outcomes"]),
                          (3, 3, 1, 1, 1, {"rule": {"ok": 1}}))
 
+    def test_a_torn_line_is_skipped_and_the_rest_still_read(self):
+        log = jev.Log(tempfile.mkdtemp())
+        log.append({"id": "d-1", "point": "batch.red_area"})
+        with open(log.path, "a", encoding="utf-8") as f:
+            f.write("}}\n")
+        log.append({"id": "d-2", "point": "batch.red_area"})
+        self.assertEqual([r["id"] for r in log.read()], ["d-1", "d-2"])
+        self.assertTrue(log.set_outcome("d-2", "ok"))
+        self.assertEqual(log.read()[1]["outcome"], "ok")
+
     def test_an_empty_log_says_so(self):
         self.assertEqual(jev.format_report({}), "no decisions logged")

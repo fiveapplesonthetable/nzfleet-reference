@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import os
+import re
 import sys
 
 from . import areas, changed_tests, files, last_green, nightly, proof, related, since
@@ -58,10 +59,44 @@ def _read_tree(root: str, suffixes: tuple) -> dict:
     return found
 
 
+_DEPLOY_CHECK = re.compile(r'^\s*"(?P<title>[^"|]+)\|(?P<command>[^"|]+)(?:\|(?P<reads>[^"]*))?"\s*$')
+_PATHLIKE = re.compile(r"[\w./-]+")
+
+
+def _deploy_checks(script: str) -> list:
+    """The checks listed in scripts/areas/deploy.sh as `"title|command|reads"`, with what each reads."""
+    checks = []
+    for line in _read(script).splitlines():
+        if not (found := _DEPLOY_CHECK.match(line)):
+            continue
+        words = [*found["command"].split(), *(found["reads"] or "").split()]
+        files = {word for word in words if os.path.isfile(word)}
+        prefixes = {word.rstrip("/") + "/" for word in words if os.path.isdir(word)}
+        text = found["command"]
+        for path in sorted(files):
+            body = _read(path)
+            text += "\n" + body
+            files |= {w for w in _PATHLIKE.findall(body) if "/" in w and not w.startswith((".", "/")) and os.path.isfile(w)}
+        checks.append({"title": found["title"], "files": files, "prefixes": prefixes, "text": text,
+                       "always": "*" in (found["reads"] or "").split()})
+    return checks
+
+
+def _read(path: str) -> str:
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        return handle.read()
+
+
 def _related(args) -> int:
     paths = _paths()
     if args.area == "fleet":
-        chosen = related.fleet(paths, _read_tree("tools/nzfleet/tests", (".py",)))
+        chosen = related.fleet(paths, _read_tree("tools/nzfleet/tests", (".py",)), _read_tree("tools/nzfleet/nzfleet", (".py",)))
+    elif args.area == "deploy":
+        chosen = related.deploy(paths, _deploy_checks("scripts/areas/deploy.sh"))
+    elif args.area == "console-specs":
+        modules = {**_read_tree("frontend/admin/e2e", (".ts", ".tsx")), **_read_tree("frontend/admin/fixtures", (".ts", ".tsx", ".mjs")),
+                   **_read_tree("frontend/admin/src", (".ts", ".tsx", ".mjs"))}
+        chosen = related.console_specs(paths, modules)
     else:
         modules = _read_tree("frontend/admin/src", (".ts", ".tsx", ".mjs"))
         modules.update(_read_tree("frontend/admin/tests", (".ts", ".tsx", ".mjs")))
@@ -138,7 +173,7 @@ def parser() -> argparse.ArgumentParser:
     t.add_argument("area")
     t.set_defaults(run=_tests)
     x = sub.add_parser("related", help="unit tests related to the paths on stdin, run from the repository root")
-    x.add_argument("area", choices=("fleet", "console"))
+    x.add_argument("area", choices=("fleet", "console", "console-specs", "deploy"))
     x.set_defaults(run=_related)
     g = sub.add_parser("last-green", help="newest green ancestor from the runs API response on stdin")
     g.add_argument("head", nargs="?", default="HEAD")

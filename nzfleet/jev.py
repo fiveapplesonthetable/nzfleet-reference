@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import enum
+import fcntl
 import json
 import math
 import os
@@ -11,7 +13,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from . import config, event_log, redact
 
@@ -282,15 +284,33 @@ class Log:
         self.path = os.path.join(home or config.HOME, "jev", "decisions.jsonl")
 
     def read(self) -> list[dict]:
+        with self._locked(fcntl.LOCK_SH):
+            return self._records()
+
+    def _records(self) -> list[dict]:
+        # A writer killed mid-line leaves a fragment; one torn record must not stop every later decision.
+        records = []
         try:
             with open(self.path, encoding="utf-8") as f:
-                return [json.loads(line) for line in f if line.strip()]
+                for line in f:
+                    try:
+                        records.append(json.loads(line))
+                    except ValueError:
+                        continue
         except OSError:
             return []
+        return [r for r in records if isinstance(r, dict)]
+
+    @contextlib.contextmanager
+    def _locked(self, mode: int) -> Iterator[None]:
+        # set_outcomes rewrites the file; without the lock an append landing mid-rewrite is lost or torn.
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path + ".lock", "a") as lock:
+            fcntl.flock(lock, mode)
+            yield
 
     def append(self, record: Mapping[str, Any]) -> None:
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        with open(self.path, "a", encoding="utf-8") as f:
+        with self._locked(fcntl.LOCK_EX), open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, sort_keys=True) + "\n")
 
     def set_outcome(self, decision_id: str, outcome: str, jev_outcome: str | None = None) -> bool:
@@ -300,18 +320,19 @@ class Log:
     def set_outcomes(self, outcomes: Mapping[str, tuple[str, str | None]]) -> int:
         """Fills `outcome` (ok, wrong or unknown: what happened to the choice that acted) and `jev_outcome` (the same
         question asked of Jev's own choice) in one rewrite. Returns how many decisions were found."""
-        records = self.read()
-        hit = 0
-        for r in records:
-            if r["id"] in outcomes:
-                r["outcome"], r["jev_outcome"] = outcomes[r["id"]]
-                hit += 1
-        if hit:
-            tmp = self.path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.writelines(json.dumps(r, sort_keys=True) + "\n" for r in records)
-            os.replace(tmp, self.path)
-        return hit
+        with self._locked(fcntl.LOCK_EX):
+            records = self._records()
+            hit = 0
+            for r in records:
+                if r.get("id") in outcomes:
+                    r["outcome"], r["jev_outcome"] = outcomes[r["id"]]
+                    hit += 1
+            if hit:
+                tmp = self.path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.writelines(json.dumps(r, sort_keys=True) + "\n" for r in records)
+                os.replace(tmp, self.path)
+            return hit
 
 
 def _jev_side(verdict: Verdict) -> Verdict | None:

@@ -7,6 +7,7 @@ from unittest import mock
 
 from nzfleet import config
 from nzfleet import dispatch
+from tests.isolated_config import isolate
 
 
 class EnvFile(unittest.TestCase):
@@ -17,7 +18,8 @@ class EnvFile(unittest.TestCase):
                 f.write(text)
             config._load(path)
 
-    def tearDown(self):
+    def setUp(self):
+        isolate(self)
         for key in ("NZFLEET_T_A", "NZFLEET_T_B", "#NZFLEET_T_C"):
             os.environ.pop(key, None)
 

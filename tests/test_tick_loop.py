@@ -332,7 +332,7 @@ class RedBatches(unittest.TestCase):
             s = w.tick()
             self.assertEqual(set(s["failed"]), {"2"})
             self.assertEqual(s["failed"]["2"]["tests"], ["money::tests::adds"])
-            self.assertEqual(w.ready, [1, 3])
+            self.assertEqual(w.ready, [])
             self.assertEqual(w.queued(), [1, 3])
 
     def test_a_culprit_is_not_checked_again_until_it_moves(self):

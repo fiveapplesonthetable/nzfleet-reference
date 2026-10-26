@@ -1,6 +1,8 @@
 """A state directory, a real git worktree and a fake agent process, for tests of what the daemon does with a run that ends."""
 
+import atexit
 import os
+import shutil
 import subprocess
 import tempfile
 import types
@@ -14,6 +16,29 @@ NOW = 1_800_000_000.0
 
 def sh(cwd, *args):
     return subprocess.run(args, cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+_TEMPLATE = []
+
+
+def template_worktree():
+    """The worktree every test starts from, built once per process and only ever copied."""
+    if not _TEMPLATE:
+        path = os.path.join(os.path.realpath(tempfile.mkdtemp()), "worktree")
+        atexit.register(shutil.rmtree, os.path.dirname(path), True)
+        os.makedirs(path)
+        sh(path, "git", "init", "-q", "-b", "main")
+        for key, value in (("user.name", "t"), ("user.email", "t@t")):
+            sh(path, "git", "config", key, value)
+        for name, text, message in (("a.txt", "a\n", "base"), ("b.txt", "b\n", "The store reads from disk")):
+            with open(os.path.join(path, name), "w") as output:
+                output.write(text)
+            sh(path, "git", "add", "-A")
+            sh(path, "git", "commit", "-qm", message)
+        with open(os.path.join(path, "c.txt"), "w") as output:
+            output.write("c\n")
+        _TEMPLATE.append(path)
+    return _TEMPLATE[0]
 
 
 class Fleet(unittest.TestCase):
@@ -52,21 +77,8 @@ class Fleet(unittest.TestCase):
     def worktree(self, slug):
         """A worktree with one commit above its base and one uncommitted file, recorded the way `nzfleet start` records it."""
         path = os.path.join(self.work, slug)
-        os.makedirs(path)
-        sh(path, "git", "init", "-q", "-b", "main")
-        for key, value in (("user.name", "t"), ("user.email", "t@t")):
-            sh(path, "git", "config", key, value)
-        with open(os.path.join(path, "a.txt"), "w") as output:
-            output.write("a\n")
-        sh(path, "git", "add", "-A")
-        sh(path, "git", "commit", "-qm", "base")
-        base = sh(path, "git", "rev-parse", "HEAD")
-        with open(os.path.join(path, "b.txt"), "w") as output:
-            output.write("b\n")
-        sh(path, "git", "add", "-A")
-        sh(path, "git", "commit", "-qm", "The store reads from disk")
-        with open(os.path.join(path, "c.txt"), "w") as output:
-            output.write("c\n")
+        shutil.copytree(template_worktree(), path, symlinks=True)
+        base = sh(path, "git", "rev-parse", "HEAD~1")
         with state.change() as s:
             s["worktrees"][slug] = {"path": path, "base": base, "base_pr": None, "port": 20000, "agent": "app-data"}
         return path

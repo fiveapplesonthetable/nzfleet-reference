@@ -34,6 +34,13 @@ def literal_paths_of_selector() -> set:
 
 
 class SelectionNamesLivePaths(unittest.TestCase):
+    def test_a_script_changed_alone_selects_fewer_areas_than_all(self):
+        everything = {"scripts/checks.sh"}
+        loose = {p: selection.select([p], "change")
+                 for p in tracked() if p.startswith("scripts/") and p not in everything}
+        self.assertEqual(sorted(p for p, (areas, unplaced) in loose.items()
+                                if unplaced or len(areas) >= len(selection.ALL)), [])
+
     def test_every_file_the_selector_names_is_tracked(self):
         named = literal_paths_of_selector()
         self.assertIn("scripts/checks.sh", named)

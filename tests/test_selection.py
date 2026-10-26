@@ -104,6 +104,9 @@ class APullRequestBuildsOnlyWhatItCanBreak(unittest.TestCase):
     def test_an_android_build_script_change_assembles_the_release(self):
         self.assertIn("android-release", costly("frontend/android/app/build.gradle.kts"))
 
+    def test_a_ci_workflow_change_assembles_the_release(self):
+        self.assertIn("android-release", costly(".github/workflows/ci.yaml"))
+
     def test_console_screenshots_alone_run_no_browser_suite(self):
         got = costly("frontend/admin/screenshots/home.png")
         self.assertIn("console", got)
@@ -112,9 +115,10 @@ class APullRequestBuildsOnlyWhatItCanBreak(unittest.TestCase):
     def test_a_console_source_beside_screenshots_runs_the_browser_suite(self):
         self.assertIn("console-browser", costly("frontend/admin/screenshots/home.png", "frontend/admin/src/a.ts"))
 
-    def test_a_train_builds_all_three(self):
-        got = costly("frontend/admin/src/a.ts", "frontend/android/app/src/main/java/a.kt", train=True)
-        self.assertGreaterEqual(got, {"image", "android-release", "console-browser"})
+    def test_a_train_builds_the_image_and_the_browser_suite_and_leaves_the_release_to_main(self):
+        got = costly("frontend/admin/src/a.ts", "frontend/android/app/src/main/java/a.kt", "frontend/android/app/build.gradle.kts", train=True)
+        self.assertGreaterEqual(got, {"image", "console-browser"})
+        self.assertNotIn("android-release", got)
 
     def test_main_builds_every_part_of_the_areas_it_runs(self):
         got = costly("frontend/admin/src/a.ts", "frontend/android/app/src/main/java/a.kt", "deploy/Dockerfile", pull_request=False)
@@ -146,7 +150,7 @@ class TheTestsAChangeNamesAreTheOnesItAffects(unittest.TestCase):
             finally:
                 os.chdir(old)
 
-    def test_a_source_file_outside_a_test_makes_the_area_run_whole(self):
+    def test_a_source_file_in_no_known_crate_makes_the_area_run_whole(self):
         with tempfile.TemporaryDirectory() as repo:
             old = os.getcwd()
             os.chdir(repo)
@@ -154,6 +158,45 @@ class TheTestsAChangeNamesAreTheOnesItAffects(unittest.TestCase):
                 os.makedirs("crates/x/src")
                 open("crates/x/src/a.rs", "w").close()
                 self.assertEqual(changed_tests.affected("rust", ["crates/x/src/a.rs"]), ["*"])
+            finally:
+                os.chdir(old)
+
+    def _workspace(self, repo):
+        for name, deps in (("base", ""), ("mid", 'base = { path = "../base" }'), ("top", 'mid = { path = "../mid" }'),
+                           ("lone", "")):
+            os.makedirs(f"{repo}/crates/{name}/src")
+            with open(f"{repo}/crates/{name}/Cargo.toml", "w") as manifest:
+                manifest.write(f'[package]\nname = "{name}"\n\n[dependencies]\n{deps}\n')
+
+    def test_a_source_file_reaches_its_crate_and_every_crate_above_it(self):
+        with tempfile.TemporaryDirectory() as repo:
+            self._workspace(repo)
+            old = os.getcwd()
+            os.chdir(repo)
+            try:
+                self.assertEqual(changed_tests.affected("rust", ["crates/mid/src/a.rs"]), ["mid", "top"])
+            finally:
+                os.chdir(old)
+
+    def test_a_test_file_reaches_only_its_own_binary(self):
+        with tempfile.TemporaryDirectory() as repo:
+            self._workspace(repo)
+            old = os.getcwd()
+            os.chdir(repo)
+            try:
+                self.assertEqual(changed_tests.affected("rust", ["crates/base/tests/money.rs"]), ["base --test money"])
+                self.assertEqual(changed_tests.affected("rust", ["crates/base/tests/common/mod.rs"]), ["base"])
+            finally:
+                os.chdir(old)
+
+    def test_a_migration_or_workspace_file_makes_the_area_run_whole(self):
+        with tempfile.TemporaryDirectory() as repo:
+            self._workspace(repo)
+            old = os.getcwd()
+            os.chdir(repo)
+            try:
+                for path in ("crates/lone/migrations/1_a.sql", "Cargo.toml", "Cargo.lock"):
+                    self.assertEqual(changed_tests.affected("rust", [path]), ["*"], path)
             finally:
                 os.chdir(old)
 

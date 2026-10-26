@@ -20,15 +20,16 @@ def changed_paths(base: str) -> list | None:
 def costly(found: tuple, paths: list, pull_request: bool, train: bool) -> tuple:
     """`found` with the release image and the costly parts set for this run.
 
-    Main and a train run all of them; any other pull request runs the image, the release APK and the browser
-    suite only when a path it touched is something they are built from.
+    Main runs all of them. A train runs the image and the browser suite, and leaves the release APK to main, where
+    R8 is off the path to a merge. Any other pull request runs each only when a path it touched is something it is
+    built from.
     """
     full = train or not pull_request
     wanted_image = full or any(areas.IMAGE_INPUTS.search(p) for p in paths)
     out = [a for a in found if a != "image" or wanted_image]
     if pull_request and wanted_image and "image" not in out:
         out.append("image")
-    if "android" in found and (full or any(areas.ANDROID_RELEASE_INPUTS.search(p) for p in paths)):
+    if "android" in found and (not pull_request or (not train and any(areas.ANDROID_RELEASE_INPUTS.search(p) for p in paths))):
         out.append("android-release")
     console = [p for p in paths if p.startswith("frontend/admin/")]
     if "console" in found and (full or any(not areas.CONSOLE_BROWSER_IDLE.search(p) for p in console)):

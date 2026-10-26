@@ -225,7 +225,7 @@ def covered(touched: frozenset, checked: list, skipped: frozenset = frozenset())
 
 # What draws, compares or publishes the frontends' screenshots and goldens. the area selection sees a workflow or a
 # script here as a deploy change, so a pass that ran only that proves nothing about the pixels.
-PIXEL_FILES = re.compile(r"(^|/)(golden|goldens|screenshots)(/|$)|^scripts/shot-report|^\.github/workflows/shots\.yaml$")
+PIXEL_FILES = re.compile(r"(^|/)(golden|goldens|screenshots)(/|$)|^tools/nzfleet/shots/shot-report|^\.github/workflows/shots\.yaml$")
 
 
 # What each slow area reads. the area selection also selects them for a change to checks.sh or ci, which rewrites no
@@ -712,19 +712,22 @@ _WORKSPACE_FILES = ("Cargo.toml", "Cargo.lock", "rust-toolchain", "rust-toolchai
 
 _DEPLOY_PROOFS = {
     "scripts/areas/deploy.sh": ("scripts/checks.sh", "deploy"),
-    "scripts/workflow-shells-test.sh": ("scripts/workflow-shells-test.sh",),
-    "scripts/workflow-shells-diagnostics-test.sh": ("scripts/workflow-shells-diagnostics-test.sh",),
-    "formal/tla/MAPPING.md": ("python3", "scripts/tla-mapping-refs.py"),
+    "tools/nzfleet/deploycheck/workflow-shells-test.sh": ("tools/nzfleet/deploycheck/workflow-shells-test.sh",),
+    "tools/nzfleet/deploycheck/workflow-shells-diagnostics-test.sh": ("tools/nzfleet/deploycheck/workflow-shells-diagnostics-test.sh",),
+    "formal/tla/MAPPING.md": ("python3", "tools/nzfleet/deploycheck/tla-mapping-refs.py"),
 }
 _PLANNER_TEST_MODULES = ("tests.test_plan", "tests.test_kit", "tests.test_shells")
 _PLANNER_FILES = {"tools/nzfleet/nzfleet/plan.py"} | {
     f"tools/nzfleet/{module.replace('.', '/')}.py" for module in _PLANNER_TEST_MODULES
 }
-_WORKFLOW_SHELL_FILES = {path for path in _DEPLOY_PROOFS if path.startswith("scripts/workflow-shells")}
+_WORKFLOW_SHELL_FILES = {path for path in _DEPLOY_PROOFS if path.startswith("tools/nzfleet/deploycheck/workflow-shells")}
+_FUZZ_NIGHTLY_FILES = {".github/workflows/fuzz.yaml", "fuzz/money-paths.sh", "fuzz/nightly-test.sh"}
 
 
 def _known_change(path: str, tracked: set) -> bool:
     if path in _DEPLOY_PROOFS:
+        return True
+    if path in _FUZZ_NIGHTLY_FILES:
         return True
     if path == ".gitignore":
         return True
@@ -866,6 +869,8 @@ def proof_plan(files: list, tracked: list, base: str) -> list:
         out.append(Check("conservative checks", ("scripts/checks.sh", "all"), needs="db"))
         return out
     out.append(Check("secrets", ("scripts/checks.sh", "secrets")))
+    if set(changed) & _FUZZ_NIGHTLY_FILES:
+        out.append(Check("fuzz nightly harness", ("bash", "fuzz/nightly-test.sh")))
     if "scripts/areas/deploy.sh" in changed:
         out.append(Check("deploy checks", _DEPLOY_PROOFS["scripts/areas/deploy.sh"]))
     else:
@@ -1216,14 +1221,18 @@ def job_argv(job: Job, name: str, network: str, mounts: dict, root: str, owner: 
     if target is not None:
         writable.append(os.path.join(target, job.area))
     handback = " ".join(shlex.quote(p) for p in [root, *writable])
+    # Runner files go in the container's own temp: every area shares the checkout and chowns all of it on exit.
+    # A file another area removed while the walk ran needs no handing back, so only other refusals fail the job.
     driver = (f'child=""; runner_files=""; finish() {{ status=$?; trap - EXIT; '
               'if [ -n "$runner_files" ]; then rm -rf -- "$runner_files"; fi; '
-              f'chown -R {owner} {handback} || handback=$?; '
+              f'refused=$(LC_ALL=C chown -R {owner} {handback} 2>&1 >/dev/null) || handback=$?; '
+              'if [ -n "$refused" ] && ! printf "%s\\n" "$refused" | grep -qv ": No such file or directory$"; then handback=0; '
+              'elif [ -n "$refused" ]; then printf "%s\\n" "$refused" >&2; fi; '
               'if [ "$status" -eq 0 ] && [ "${handback:-0}" -ne 0 ]; then status=$handback; fi; exit "$status"; }; '
               'set -m; interrupt() { status=$1; trap - TERM INT; if [ -n "$child" ]; then '
               'kill -TERM -- "-$child" 2>/dev/null || :; wait "$child" 2>/dev/null || :; fi; exit "$status"; }; '
               "trap finish EXIT; trap 'interrupt 143' TERM; trap 'interrupt 130' INT; "
-              'runner_files=$(mktemp -d "$PWD/.github-runner.XXXXXX") || exit 1; '
+              'runner_files=$(mktemp -d -t github-runner.XXXXXX) || exit 1; '
               'export GITHUB_PATH="$runner_files/path" GITHUB_ENV="$runner_files/env" '
               'GITHUB_OUTPUT="$runner_files/output" GITHUB_STEP_SUMMARY="$runner_files/summary"; '
               'export GITHUB_SHA=$(git rev-parse HEAD) || exit 1; '

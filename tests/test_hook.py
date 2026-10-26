@@ -80,7 +80,7 @@ exit "${HOOK_CHECK_EXIT:-0}"
                 self.assertEqual(run.returncode, expected, run.stdout + run.stderr)
                 self.assertEqual(Path(env["HOOK_GUARD_MARKER"]).read_text(), "called")
                 self.assertEqual(self.snapshot(), before)
-                self.assertEqual(self.git("status", "--porcelain"), "")
+                self.assertEqual(self.git("diff", "--stat", "HEAD"), "")
                 self.assertTrue((fixture / ".git").is_dir())
                 built = subprocess.run(["git", "-C", str(fixture), "log", "-1", "--format=%s"],
                                        env=self.clean_env, check=True, capture_output=True, text=True)
@@ -97,7 +97,7 @@ exit "${HOOK_CHECK_EXIT:-0}"
                              cwd=ROOT / "tools/nzfleet", env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         self.assertEqual(self.snapshot(), before)
-        self.assertEqual(self.git("status", "--porcelain"), "")
+        self.assertEqual(self.git("diff", "--stat", "HEAD"), "")
 
 
 if __name__ == "__main__":

@@ -117,9 +117,6 @@ def run(numbers: list, generators: dict, limit: int = 0, say=print) -> int:
     if not wanted:
         say("nothing to land")
         return 0
-    if pending := trainpr.ci_proof_pending(_last_ci_change(), state.read()["main_ci"], world.is_ancestor):
-        say(f"nothing to land: {pending}")
-        return 0
     world.fetch(wanted)
     heads = {n: world.head_of(n) for n in wanted}
     files = {n: tuple(world.changed_files(heads[n])) for n in wanted}
@@ -196,7 +193,8 @@ def _open(final: Assembly, left_out: list, dropped: list, open_prs: list, screen
                                     "members": members, "left_out": [n for n, _ in left_out],
                                     "dropped": [n for n, _ in dropped], "compiled": True, "ci": ci,
                                     "reviewed": "", "mailing": False, "mailed": False}
-    batch.start_batch([pr])
+    proof_areas = trainpr.ci_proof_areas(_last_ci_change(), state.read()["main_ci"], world.is_ancestor)
+    batch.start_batch([pr], areas=sorted(batch.areas_of([sha]) | proof_areas) if proof_areas else None)
     say(f"#{pr}: {trainpr.title(len(members))} ({branch})")
     return 0
 
@@ -207,6 +205,7 @@ def _waiting(pr: str, record: dict, s: dict) -> str:
     passed = s["passed"].get(pr)
     files = world.changed_files(head)
     required = trainpr.required_areas(files, world.areas(files, "train"), config.SKIP_AREAS)
+    required |= trainpr.ci_proof_areas(_last_ci_change(), s["main_ci"], world.is_ancestor)
     return trainpr.waiting_for(record, passed, s["batches"].get(passed["batch"], {}) if passed else {}, head,
                                world.verified_tree([(int(pr), head)]), required)
 

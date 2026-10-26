@@ -293,7 +293,7 @@ def ready(prs: list, dry_run: bool) -> list:
     order = [n for n in order if n not in conflicting]
     if conflicting and not dry_run:
         queue_sibling_rebases(conflicting, by_number)
-    if not dry_run:
+    if not dry_run and len(order) == 1:  # a member of a train is made ready when the train lands; ready starts a full ci run
         for n in order:
             if by_number[n].draft:
                 world.mark_ready(n)

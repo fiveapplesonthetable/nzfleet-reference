@@ -149,10 +149,10 @@ class BuildOutput(Machine):
         held_root = self.make("nzt", "held", hours_old=5)
         held = os.path.join(self.make("nzt", "held", "debug", "deps", hours_old=5), "crate.rlib")
         idle = self.make("nzt", "idle", hours_old=5)
-        with open(held, "wb") as file:
+        with open(held, "wb"):
             os.utime(held, (NOW - 5 * HOUR,) * 2)
-            self.host.proc = "/proc"
-            janitor.run(self.host)
+        self.process_holds(7, held)
+        janitor.run(self.host)
         self.assertEqual((os.path.exists(held_root), os.path.exists(idle)), (True, False))
 
     def test_a_live_process_argument_naming_a_build_dir_keeps_it(self):
@@ -558,4 +558,4 @@ class WarmCaches(unittest.TestCase):
         with mock.patch.object(janitor, "_gb", return_value=5):
             lines = janitor.run(host)
         self.assertFalse(os.path.exists(cache))
-        self.assertIn("over its 0 GB", lines[0])
+        self.assertTrue(any("over its 0 GB" in line for line in lines), lines)

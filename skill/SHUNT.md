@@ -89,20 +89,26 @@ Everything below has to land for shunt to replace nzfleet. Land it all; there is
 
 ## Still changing in the live nzfleet
 
-The live copy stays in nzela and keeps running the fleet until shunt replaces it, so this snapshot will fall behind. These changes were in flight when it was taken. Design for where each is going, not for what this copy shows:
+The live copy stays in nzela and keeps running the fleet until shunt replaces it, so this snapshot falls behind. It is refreshed from nzela main whenever main's nzfleet changes, and this section moves with it. Design for where each item is going, not for what this copy shows.
 
-- **Fork sync is going away.** Pull requests now run on the upstream repository's own PR-tier runners, and fork pushes no longer get CI. Do not build the fork-sync paths.
-- **Batches take one more CI expression.** `areas.py` now supplies `CEILING_BASE` alongside `NZELA_BASE`. Expect more of these, and keep the refuse-if-unknown rule rather than a fixed list.
-- **Rust and Android checks are becoming incremental.** Rust checks only the crates a change reaches, in a warm target. Android builds and tests by Gradle module. The goal is seconds locally with warm build servers. An area's checks will become "the affected units of this area", so model a check as area plus affected units, not area alone.
-- **The crate split has landed** (nzela #1845); the platform crate's split finishes next. Contract suites on every port, an in-process simulator and a split load driver change which checks a change selects.
-- **Nothing writes to the root disk.** Every agent and runner gets `TMPDIR`, `TMP`, `TEMP` and the JVM's `java.io.tmpdir` under the fleet's tmp directory, `nzfleet setup` installs the same for the runner services, tidy removes old leftovers there, and the fleet check alerts when `/` is short. Shunt must do the same from day one.
-- **The area selector writes no bytecode** into the checkout it runs from, so a hook or CI run leaves `git status` clean.
-- **Stall detection is being fixed** to count child processes, after workers waiting on long checks were stopped as stalled. Shunt should start from the fixed behaviour.
-- **A console browser test run that hangs** after its tests pass is being fixed. A batch area must have a cap, and hitting the cap must be reported as a hang with the last thing the job printed, not as a cancellation.
-- **Presubmit and postsubmit are being split.** Before merge runs a subset chosen by the change, after merge runs everything, and a full gate runs before real-money production. Shunt's batch should support both modes.
-- **Compromises are tracked in nzela issue #1787** and are being worked through. Several touch nzfleet's checks.
+Landed since the 25 Oct snapshot, so shunt should start from them:
 
-When the snapshot is refreshed, this section is updated with it. The code was last refreshed from nzela main on 25 Oct (d20c6570e).
+- **Presubmit and postsubmit are split.** The pre-push hook runs only what a change can reach: Android test classes, console specs, deploy and fleet scripts. It prints its wall time. The full run on main starts after the deploy finishes, and the suites after a merge wait for the deploy so it never queues behind them.
+- **Android unit tests run in four parallel shards** behind one compile job, and console source changes reach every browser spec.
+- **Batch areas that share one checkout no longer break each other's cleanup.** Runner files go in the container's own temp, and a batch's shallow checkout holds the base commit its checks compare against.
+- **Repair trains run a full batch when main's CI is unproven.**
+- **One torn line in the decisions log no longer stops supervision.**
+- **More tooling moved under `tools/nzfleet`:** backups and the restore drill (`backup/`), release and image scripts (`release/`), deploy checks (`deploycheck/`), screenshot planning (`shots/`) and the book build (`book/`). In shunt, each of these is a plugin, not core.
+
+In flight now:
+
+- **Accepting moved screenshots from a run** (`nzfleet shots accept <run>`). A batch already saves every before and after image under `runs/<run>/shots/<area>/{before,after}/<repo path>`. When a golden moves on purpose, the command copies that run's after images into the branch and stages them: by default only the goldens that moved, with `--all` every image that moved. It refuses when the run was drawn from another HEAD. A batch that fails on a moved golden prints the exact command. Without it, the image was copied by hand and the step was often missed. Shunt should have this from the start, as a generic "accept the artifacts this run produced" with the screenshot rules in project config.
+- **Screenshot tag limits are per screen, each with its reason.** Golden screens are held exactly, and every other screen has a cap on the status tags it may show, plus one per row and one in the header. A cap is raised only with the reason written beside it. That is project config, not shunt core.
+- **Rust checks are becoming incremental:** only the crates a change reaches, in a warm target. Model a check as an area plus its affected units.
+- **CI toward five minutes to deploy and seconds locally** is the current priority. Expect the selection code (`nzfleet/selection/`) to keep changing.
+- **Compromises are tracked in nzela issue #1787**, and several touch nzfleet's checks.
+
+The code was last refreshed from nzela main on 26 Oct (de178aa64).
 
 ## What to build first
 

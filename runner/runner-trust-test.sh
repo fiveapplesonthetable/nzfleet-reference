@@ -57,9 +57,9 @@ value_of() {
 # pull request writes its own `runs-on`, so this test cannot stop one that
 # ignores it; what does is the trusted tier refusing any workflow that is not
 # main's. `docs/ci-runners.md` has that setting.
-PR_TIER="\${{ github.event_name == 'pull_request' && 'nzela-pr' || vars.CI_RUNS_ON || 'ubuntu-latest' }}"
+PR_TIER="\${{ github.event_name == 'pull_request' && 'nzela-pr' || inputs.full && vars.CI_POSTSUBMIT_RUNS_ON || vars.CI_RUNS_ON || 'ubuntu-latest' }}"
 # Only reached by a job whose `if` keeps pull requests out, checked in
-# scripts/workflow-concurrency-test.sh.
+# tools/nzfleet/deploycheck/workflow-concurrency-test.sh.
 DEVICE_TIER="\${{ vars.CI_DEVICE_RUNS_ON || vars.CI_RUNS_ON || 'ubuntu-latest' }}"
 
 # A file triggered by a pull request asks only for hosted machines or the

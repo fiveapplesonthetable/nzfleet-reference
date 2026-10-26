@@ -84,12 +84,12 @@ class ReadySets(unittest.TestCase):
             w.tick()
             self.assertEqual(w.mailed("ready"), [])
 
-    def test_the_prs_of_a_passing_batch_are_marked_ready_for_review(self):
+    def test_the_prs_of_a_passing_train_stay_drafts_until_it_lands(self):
         with World() as w:
             w.open_pr(1, {other(1): "one\n"})
             w.open_pr(2, {other(2): "two\n"}, base="pr1")
             w.tick()
-            self.assertEqual(w.ready, [1, 2])
+            self.assertEqual(w.ready, [])
 
 
 class Events(unittest.TestCase):

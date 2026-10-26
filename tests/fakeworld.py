@@ -1,8 +1,10 @@
 """A world for driving `tick.run` end to end: a real git repository in a temp directory, a fake GitHub, and a
 batch runner that answers from a table. Nothing here touches the network, docker or the machine's own state."""
 
+import atexit
 import contextlib
 import os
+import shutil
 import subprocess
 import tempfile
 import types
@@ -23,6 +25,42 @@ def sh(cwd, *args):
 def real_repo_is_bare():
     """Whether the checkout the suite runs from has been flipped to bare; read before and after every world."""
     return subprocess.run(["git", "config", "--get", "core.bare"], capture_output=True, text=True).stdout.strip() == "true"
+
+
+_BASE = []
+
+
+def base_world():
+    """The repository and its bare origin as every world starts, built once per process and only ever copied."""
+    if not _BASE:
+        root = os.path.realpath(tempfile.mkdtemp())
+        atexit.register(shutil.rmtree, root, True)
+        origin, repo = os.path.join(root, "origin.git"), os.path.join(root, "repo")
+        sh(root, "git", "init", "-q", "--bare", origin)
+        sh(root, "git", "init", "-q", "-b", "main", repo)
+        for key, value in (("user.name", "t"), ("user.email", "t@t")):
+            sh(repo, "git", "config", key, value)
+        sh(repo, "git", "remote", "add", "origin", origin)
+        for path in (CODE, SHOT):
+            os.makedirs(os.path.dirname(os.path.join(repo, path)), exist_ok=True)
+            with open(os.path.join(repo, path), "w") as f:
+                f.write("base\n")
+        sh(repo, "git", "add", "-A")
+        sh(repo, "git", "commit", "-q", "-m", "base")
+        sh(repo, "git", "update-ref", world.MAIN.replace("upstream", "refs/remotes/upstream", 1), "main")
+        _BASE.append((root, origin))
+    return _BASE[0]
+
+
+def copy_base(into):
+    """A private copy of the base world under `into`, with the repository's origin pointing at the copy."""
+    root, origin = base_world()
+    shutil.copytree(root, into, symlinks=True, dirs_exist_ok=True)
+    config_path = os.path.join(into, "repo", ".git", "config")
+    with open(config_path) as f:
+        text = f.read()
+    with open(config_path, "w") as f:
+        f.write(text.replace(origin, os.path.join(into, "origin.git")))
 
 
 class Runner:
@@ -56,15 +94,7 @@ class World:
         self.was_bare = real_repo_is_bare()
         self.dir = os.path.realpath(tempfile.mkdtemp())
         self.repo, self.origin = os.path.join(self.dir, "repo"), os.path.join(self.dir, "origin.git")
-        sh(self.dir, "git", "init", "-q", "--bare", self.origin)
-        sh(self.dir, "git", "init", "-q", "-b", "main", self.repo)
-        for key, value in (("user.name", "t"), ("user.email", "t@t")):
-            sh(self.repo, "git", "config", key, value)
-        sh(self.repo, "git", "remote", "add", "origin", self.origin)
-        self.write(CODE, "base\n")
-        self.write(SHOT, "base\n")
-        self.commit("base")
-        self.publish_main()
+        copy_base(self.dir)
         self.runner, self.deploys, self.ci = Runner(), [], None
         self.prs, self.draft, self.pinned, self.issues = {}, {}, {}, {}
         self.said, self.ready, self.comments, self.logs = [], [], [], {}
@@ -77,6 +107,7 @@ class World:
 
     def __exit__(self, *exc):
         self.stack.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
         if real_repo_is_bare() and not self.was_bare:
             raise AssertionError("a test turned the real repository bare")
 

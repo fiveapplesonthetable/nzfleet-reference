@@ -8,6 +8,7 @@ import re
 from dataclasses import dataclass
 
 from . import plan, rebases
+from .selection import areas, since
 
 SHOT = "shots"
 GENERATED = "generated"
@@ -26,17 +27,16 @@ def solo_ci(candidates: list) -> list:
     return ci[:1] or candidates
 
 
-def ci_proof_pending(ci_sha: str, main_ci: dict, is_ancestor) -> str:
-    """The sentence for why no train may form, or '' once a real run of main's ci passed at or after the commit
-    `ci_sha` that last changed the pipeline."""
+def ci_proof_areas(ci_sha: str, main_ci: dict, is_ancestor) -> frozenset:
+    """The complete batch proof required until main's CI passes the latest pipeline change."""
     passed = main_ci.get("sha")
     if not ci_sha or (main_ci.get("ok") and passed and is_ancestor(ci_sha, passed)):
-        return ""
-    return f"{ci_sha[:8]} changed how ci runs and no main ci run has passed since; nothing else lands until one does"
+        return frozenset()
+    return frozenset((*areas.ALL, *since.COSTLY, plan.GATE))
 
 
-CI_NOTICE = ("This changes how checks run, so it is batched alone. Once it merges, one real run of main's ci "
-             "must pass before any other change lands.")
+CI_NOTICE = ("This changes how checks run, so it is batched alone. Until main's CI passes it, "
+             "each following train needs a full batch pass on its exact merged tree.")
 
 
 def green_at_head(batches: dict) -> frozenset:
