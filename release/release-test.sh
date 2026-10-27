@@ -198,8 +198,8 @@ the_test_deploy_passes_its_project_to_the_release() {
     deploy_job="$(awk '/^  deploy:$/ {found=1; next}
                         found && /^  [[:alnum:]_-]+:$/ {exit}
                         found {print}' "$root/.github/workflows/deploy.yaml")"
-    printf '%s\n' "$deploy_job" \
-        | grep -Fqx '      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT }}' \
+    # A here-string, not a pipe: grep -q exits on the match and pipefail would count printf's SIGPIPE as a miss.
+    grep -Fqx '      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT }}' <<<"$deploy_job" \
         || fail "$1" "the test deploy does not pass its GCP project to release.sh"
 }
 

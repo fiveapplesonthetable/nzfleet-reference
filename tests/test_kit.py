@@ -220,16 +220,21 @@ class Proof(unittest.TestCase):
 
     def test_rust_checks_receive_the_existing_compiler_cache(self):
         check = Check("rust tests", ("cargo", "+1.98", "test"))
-        env = prove.check_environment(check, {"PATH": "/bin"}, {"RUSTC_WRAPPER": "/tree/scripts/rustc-wrapper.sh"}, "gradle-slot")
+        env = prove.check_environment(check, {"PATH": "/bin"}, {"RUSTC_WRAPPER": "/tree/scripts/rustc-wrapper.sh"}, "gradle-slot", "base")
         self.assertEqual(env["RUSTC_WRAPPER"], "/tree/scripts/rustc-wrapper.sh")
         self.assertNotIn("NZELA_GRADLE_SLOT", env)
 
     def test_conservative_checks_receive_both_reusable_caches_and_the_android_slot(self):
         check = Check("conservative checks", ("scripts/checks.sh", "all"))
-        env = prove.check_environment(check, {"PATH": "/bin"}, {"RUSTC_WRAPPER": "/tree/scripts/rustc-wrapper.sh"}, "gradle-slot")
+        env = prove.check_environment(check, {"PATH": "/bin"}, {"RUSTC_WRAPPER": "/tree/scripts/rustc-wrapper.sh"}, "gradle-slot", "base")
         self.assertEqual(env["RUSTC_WRAPPER"], "/tree/scripts/rustc-wrapper.sh")
         self.assertEqual(env["NZELA_GRADLE_SLOT"], "gradle-slot")
 
+
+    def test_every_check_is_told_the_base_the_change_is_proved_against(self):
+        check = Check("conservative checks", ("scripts/checks.sh", "all"))
+        env = prove.check_environment(check, {"PATH": "/bin"}, {}, "", "abc123")
+        self.assertEqual(env["NZELA_BASE"], "abc123")
 
 class Refusals(unittest.TestCase):
     ok = {"ok": True, "tree": "T", "checks": []}

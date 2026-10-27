@@ -41,9 +41,10 @@ def tree_of_files(wt: str) -> str:
             pass
 
 
-def check_environment(check: plan.Check, inherited: dict, rust_cache: dict, gradle_slot: str) -> dict:
-    """Adds only the cache and Android slot needed by a selected proof command."""
-    env = dict(inherited)
+def check_environment(check: plan.Check, inherited: dict, rust_cache: dict, gradle_slot: str, base: str) -> dict:
+    """Adds the base and only the cache and Android slot needed by a selected proof command."""
+    # The compatibility, limit and console-wait checks diff against it and refuse to run without it.
+    env = dict(inherited, NZELA_BASE=base)
     if check.cmd[0] == "cargo" or check.name == "conservative checks":
         env.update(rust_cache)
     if check.name == "conservative checks" and gradle_slot:
@@ -120,7 +121,7 @@ def prove(say=print) -> int:
         log = os.path.join(proof_dir, f"{i:02d}-{check.name.split(':')[0].replace(' ', '-')}.log")
         say(f"[{i}/{len(checks)}] {check.name}  ({' '.join(check.cmd)[:100]})")
         started = time.monotonic()
-        env = check_environment(check, os.environ, rust_cache, GRADLE_SLOT)
+        env = check_environment(check, os.environ, rust_cache, GRADLE_SLOT, base)
         code = run_check(argv, os.path.join(wt, check.cwd), log, say, env=env)
         with open(log, errors="replace") as f:
             text = f.read()
