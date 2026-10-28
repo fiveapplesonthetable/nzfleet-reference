@@ -267,3 +267,28 @@ New in this commit and to settle before running beside nzfleet:
 - The step-3 test reaches `notify_owner_command`; tests must not reach a real mail hook.
 
 Tests at 0aa4ecd, sandboxed as before at load about 60: build 72 s; 919 non-daemon and 88 daemon tests passed, none failed; the fleet root and the shunt checkout unchanged; no daemon and no `yes` burner left after this run. One clean run is not the five in a row under load that done requires, and the burner leak was seen on an earlier run, so its check belongs in the suite rather than in this script.
+
+## Where shunt stands at 523dab5
+
+The five open items from 0aa4ecd are settled in code, and most of step 5 is now called from real paths.
+
+- Escalate kills only a worker found in the main checkout (SIGTERM to the verified pid, then its process group); an ordinary stall records a decision and tells the owner, with no kill and no hold (`exec/mod.rs`).
+- `resolves_to_main_checkout` compares against the recorded `TACHO_REPO`, so a holder directory is no longer mistaken for the main checkout.
+- The provisioning fallback runs only inside the fleet root (`is_within_fleet_root`); outside it the task is held and the start refused. With no explicit repo, the parent of the store home also counts as inside, which is wide.
+- Tests reach the owner only through a `Hands::notify_owner` method, and in a test build `notify_owner_command` uses only `TACHO_TEST_NOTIFY_CMD`. Detecting a test binary in production code is a smell, but it protects. Direct calls remain in `fleet/land.rs` and `fleet/watch.rs`.
+- The starve burner is reaped by a guard in the test and by `BurnersGuard::stop_all`, and `scripts/test-suite.sh` fails the run if a `yes` with `TACHO_STARVE=1` survives. That check is in the script, not in `cargo test`, and there is still no parent-death signal, so a SIGKILLed runner can leak one.
+
+Wired now, each with tests through the path: shots on the merged train tree and in the batch (`stage_and_commit_merged_screenshots`; a golden move fails the batch), train head-move refusal (`batch_refs_moved`), costly-area selection in the batch planner, `TACHO_BASE` in proof checks, the guards in the hook, UTC migration names in `kit`, and the root-disk read in the tick. `tacho shots accept <run>` exists and refuses when the run's head is not HEAD. Two things to fix: `ShotRules::default()` hard-codes the nzela screenshot paths, area names and aliases in core, and every caller uses it with no config; and the root-disk action only records `prune_root_disk_volumes`, it prunes nothing.
+
+Added in these commits and still called only by their own tests: `plan_actions_tidy`, `ci_proof_areas`, `affected_rust_targets`, the screen tag caps, `related_console_specs`, `related_package_tests_with_modules` and `DEFAULT_DEPLOY_CHECKS`. That means no data-loss risk yet. What they do matches nzfleet where I compared:
+
+- `plan_actions_tidy` equals `actions-tidy.sh`: caches by last access, artifacts by age, the newest 3 per name kept, older ones removed once two hours settled, with release-image, ci-proof and verified-image-digest exempt. It is a pure planner with no delete hand.
+- `ci_proof_areas` equals `trainpr.py`: every area until main's CI has passed at or after the proof sha.
+- The runner handback in `ci_runner.rs` has the same design as `plan.py`: a missing path is not a refusal, any other chown refusal fails an otherwise green job. Its test only checks that the script text contains the pieces; it does not run it.
+- `affected_rust_targets` under-selects against `changed_tests.py::_rust_affected`: a change under `fuzz/` selects nothing where Python selects everything. It also reads Cargo.toml with regexes where Python parses it. Fix before it is called.
+
+No new data-loss or live-worker-killing blocker, and no time-based test seen. Not run beside nzfleet yet, and parity for the stall watch, mail and redaction, and the runner pool was not examined.
+
+Tests at 523dab5, sandboxed as before, with the 1.98 toolchain: build 2 min 44 s, load falling from about 90 to 37; 954 non-daemon tests and 78 daemon tests passed, 3 daemon tests failed. Two failures are environmental to this machine: `test_holder_directory_worker_is_not_mistaken_for_main_checkout` and `test_ordinary_stall_escalation_notifies_owner_without_killing_worker` put their fixtures under a temp directory that sits inside another git repository, and with `TACHO_REPO` unset the fallback treats any directory under a repository with a `.git` directory as the main checkout. The tests should set `TACHO_REPO` or make their own root, and the fallback should not trust an enclosing repository it was not told about. The third, `test_cgroup_integration_accounting`, failed to find its daemonized burner in a process slot at load above 60. The ordinary-stall test therefore did not get to prove the no-kill path here. The fleet root was unchanged, the checkouts clean, and no daemon or `yes` burner was left behind.
+
+Verdict: the 0aa4ecd blockers are fixed and step 5 is mostly wired, but the suite is red here on three tests and the tidy, CI-proof and incremental-target helpers are still uncalled, so not ready to run beside nzfleet.
