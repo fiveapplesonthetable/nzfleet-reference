@@ -300,6 +300,10 @@ def run_on_host(area: str, root: str, target: str, slot: list, out, name: str = 
         env.update(rust_cache_env(root, sccache))
     argv = ["taskset", "-c", cpu_list(cpus), *(slot if area == "android" else []), "scripts/checks.sh", area]
     scopes, unit = user_scopes(), f"{name or 'nzf-' + os.path.basename(root)}-{area}"
+    # Named here so a stop that kills the area script before its trap runs can still remove the container.
+    capture = f"{unit}-shots" if area == "console" else None
+    if capture:
+        env["NZELA_CAPTURE_CONTAINER"] = capture
     if area == "android" and job and not scopes:
         out.write(b"android: native CPU quota needs a managed user scope\n")
         return NOT_STARTED, 0.0
@@ -325,8 +329,14 @@ def run_on_host(area: str, root: str, target: str, slot: list, out, name: str = 
             child = subprocess.Popen(argv, cwd=root, env=env, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
             if stop:
                 # A scope holds daemons that left the process group, so it is stopped as a unit.
-                stop.register(area, (lambda: subprocess.run(["systemctl", "--user", "stop", f"{unit}.scope"], capture_output=True))
-                              if scopes else (lambda: os.killpg(child.pid, signal.SIGKILL)))
+                def halt():
+                    if scopes:
+                        subprocess.run(["systemctl", "--user", "stop", f"{unit}.scope"], capture_output=True)
+                    else:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    if capture:
+                        subprocess.run(["docker", "rm", "-f", capture], capture_output=True)
+                stop.register(area, halt)
             _, status, used = os.wait4(child.pid, 0)
             if stop:
                 stop.finish(area)

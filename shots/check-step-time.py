@@ -100,6 +100,12 @@ def cap_for(name: str) -> int | None:
     return None
 
 
+def remove_container(name: str | None) -> None:
+    """A SIGKILL to the step runs no trap, and docker does not stop a container whose client died."""
+    if name:
+        subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
 def hang_report(name: str, cap: int, metrics: Measurements) -> list[str]:
     lines = [f"HANG: {name} was still running after its cap of {cap}s and was killed."]
     if metrics.slow:
@@ -180,6 +186,7 @@ def main() -> int:
             if not ready:
                 hung = True
                 os.killpg(child.pid, signal.SIGKILL)
+                remove_container(os.environ.get("SHOT_CONTAINER_NAME"))
                 break
             for key, _ in ready:
                 chunk = os.read(key.fd, 8192)

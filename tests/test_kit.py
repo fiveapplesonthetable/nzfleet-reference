@@ -218,6 +218,21 @@ class Proof(unittest.TestCase):
     def test_a_proof_of_exactly_this_tree_stands(self):
         self.assertEqual(plan.proof_problems(self.ok, "T", False), [])
 
+    def test_a_proof_covers_a_commit_that_drops_redrawn_non_golden_shots(self):
+        changes = ["frontend/admin/screenshots/05-transfer-detail-waiting.png"]
+        problems = plan.proof_problems(self.ok, "OTHER", False, changes, set())
+        self.assertEqual(problems, [])
+
+    def test_a_proof_does_not_cover_a_commit_that_changes_source(self):
+        changes = ["crates/nzela/src/lib.rs"]
+        problems = plan.proof_problems(self.ok, "OTHER", False, changes, set())
+        self.assertIn("older than the last commit", problems[0])
+
+    def test_a_proof_does_not_cover_a_commit_that_drops_a_moved_golden_shot(self):
+        golden = {"frontend/admin/screenshots/01-signin.png"}
+        problems = plan.proof_problems(self.ok, "OTHER", False, list(golden), golden)
+        self.assertIn("older than the last commit", problems[0])
+
     def test_rust_checks_receive_the_existing_compiler_cache(self):
         check = Check("rust tests", ("cargo", "+1.98", "test"))
         env = prove.check_environment(check, {"PATH": "/bin"}, {"RUSTC_WRAPPER": "/tree/scripts/rustc-wrapper.sh"}, "gradle-slot", "base", "/wt")

@@ -8,6 +8,8 @@ import re
 CONSOLE = "frontend/admin/"
 ANDROID = "frontend/android/"
 SHOT_DIRS = {"console": CONSOLE + "screenshots/", "android": ANDROID + "docs/screenshots/"}
+REDRAWN = {"console": (SHOT_DIRS["console"], CONSOLE + "docs/comparison.html"),
+           "android": (SHOT_DIRS["android"],)}
 GENERATED = (CONSOLE + "screenshots/", CONSOLE + "docs/", ANDROID + "docs/")
 # Screens whose shots are named for something else.
 ALIASES = {"home": "dashboard", "settings": "preferences", "funding": "treasury", "provider": "treasury"}
@@ -18,6 +20,11 @@ MOVES_NO_PIXEL = re.compile(r"(\.md$|\.test\.[jt]sx?$|\.spec\.[jt]s$|/e2e/|/docs
 
 def is_shot(path: str) -> bool:
     return path.endswith(".png") and any(path.startswith(d) for d in SHOT_DIRS.values())
+
+
+def is_redrawn(path: str) -> bool:
+    """Whether a check may regenerate this path."""
+    return is_shot(path) or any(path == item for paths in REDRAWN.values() for item in paths if not item.endswith("/"))
 
 
 def area_of(path: str) -> str:

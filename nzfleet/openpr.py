@@ -37,10 +37,16 @@ def pr(title: str, description: str, dry_run: bool, shots_anyway: bool = False, 
         proof = None
     tree = world.git("rev-parse", "HEAD^{tree}", cwd=wt).strip()
     dirty = bool(world.git("status", "--porcelain", cwd=wt).strip())
-    refusals = plan.pr_refusals(files, commits, title, description, merges, proof, tree, dirty)
+    read = lambda path: world.git("show", f"HEAD:{path}", cwd=wt, check=False) or ""
+    golden = shots.golden_names(read)
+    tree_changes = (world.git("diff", "--no-renames", "--name-only", proof["tree"], tree, cwd=wt).split()
+                    if proof and proof.get("tree") else None)
+    read_proof = lambda path: world.git("show", f"{proof['tree']}:{path}", cwd=wt, check=False) or ""
+    proof_golden = shots.golden_names(read_proof) if proof and proof.get("tree") else set()
+    refusals = plan.pr_refusals(files, commits, title, description, merges, proof, tree, dirty,
+                                tree_changes, proof_golden)
     if not shots_anyway:
-        read = lambda path: world.git("show", f"HEAD:{path}", cwd=wt, check=False) or ""
-        stray = shots.stray(files, shots.golden_names(read))
+        stray = shots.stray(files, golden)
         refusals += [shots.refusal(stray)] if stray else []
     stacked = int(os.environ["NZ_BASE_PR"]) if os.environ.get("NZ_BASE_PR") else None
     body = plan.build_body(description, proof, stacked) if not refusals else ""

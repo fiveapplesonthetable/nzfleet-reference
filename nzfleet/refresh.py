@@ -10,8 +10,7 @@ from .config import UPSTREAM, WORK
 
 # The area whose screenshots a source tree draws.
 SOURCES = {"console": "frontend/admin/", "android": "frontend/android/"}
-SHOTS = {"console": ("frontend/admin/screenshots/", "frontend/admin/docs/comparison.html"),
-         "android": ("frontend/android/docs/screenshots/",)}
+SHOTS = shots.REDRAWN
 
 
 def redrawn(shots: str) -> dict:

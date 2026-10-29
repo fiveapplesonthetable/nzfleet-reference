@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional
 
-from . import holds, runs
+from . import holds, runs, shots
 
 
 @dataclass(frozen=True)
@@ -719,7 +719,7 @@ _DEPLOY_PROOFS = {
 _PLANNER_TEST_MODULES = ("tests.test_plan", "tests.test_kit", "tests.test_shells")
 _PLANNER_FILES = {"tools/nzfleet/nzfleet/plan.py"} | {
     f"tools/nzfleet/{module.replace('.', '/')}.py" for module in _PLANNER_TEST_MODULES
-}
+} | {"tools/nzfleet/nzfleet/openpr.py", "tools/nzfleet/nzfleet/shots.py", "tools/nzfleet/nzfleet/refresh.py"}
 _WORKFLOW_SHELL_FILES = {path for path in _DEPLOY_PROOFS if path.startswith("tools/nzfleet/deploycheck/workflow-shells")}
 _FUZZ_NIGHTLY_FILES = {".github/workflows/fuzz.yaml", "fuzz/money-paths.sh", "fuzz/nightly-test.sh"}
 
@@ -907,7 +907,8 @@ def tail(log: str, n: int = 6) -> str:
     return "\n".join([line for line in log.splitlines() if line.strip()][-n:])[-700:]
 
 
-def proof_problems(proof: Optional[dict], tree: str, dirty: bool) -> list:
+def proof_problems(proof: Optional[dict], tree: str, dirty: bool, tree_changes: Optional[list] = None,
+                   golden: Optional[set] = None) -> list:
     """Why the proof does not cover this commit. `tree` is the tree of HEAD."""
     if proof is None:
         return ["there is no proof. Run: nzfleet prove"]
@@ -918,9 +919,15 @@ def proof_problems(proof: Optional[dict], tree: str, dirty: bool) -> list:
     out = []
     if dirty:
         out.append("there are uncommitted changes. Commit them, then run: nzfleet prove")
-    if proof.get("tree") != tree:
+    changed_only_in_dropped_shots = (tree_changes is not None and bool(tree_changes) and
+                                     all(_is_droppable_shot(path, golden or set()) for path in tree_changes))
+    if proof.get("tree") != tree and not changed_only_in_dropped_shots:
         out.append("the proof is older than the last commit: the files differ from the ones `nzfleet prove` ran on. Run: nzfleet prove")
     return out
+
+
+def _is_droppable_shot(path: str, golden: set) -> bool:
+    return shots.is_redrawn(path) and path not in golden
 
 
 _ATTRIBUTION = [
@@ -937,7 +944,7 @@ def attribution(text: str) -> list:
 
 
 def pr_refusals(files: list, commits: list, title: str, description: str, merges: list, proof: Optional[dict],
-                tree: str, dirty: bool) -> list:
+                tree: str, dirty: bool, tree_changes: Optional[list] = None, golden: Optional[set] = None) -> list:
     """Every reason a pull request cannot be opened yet, each saying what to do. `commits` is (sha, message)."""
     out = []
     if not title.strip() or not description.strip():
@@ -952,7 +959,7 @@ def pr_refusals(files: list, commits: list, title: str, description: str, merges
             out.append(f"commit {sha[:8]} carries {what}. Remove it: git commit --amend (the last commit) or git rebase -i")
     for what in attribution(title + "\n" + description):
         out.append(f"the title or description carries {what}. Remove it")
-    return out + proof_problems(proof, tree, dirty)
+    return out + proof_problems(proof, tree, dirty, tree_changes, golden)
 
 
 def build_body(description: str, proof: dict, stacked_on: Optional[int]) -> str:
