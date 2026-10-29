@@ -4,6 +4,7 @@ import unittest
 from unittest import mock
 
 from nzfleet import config, cpu_budget, machine
+from tests.isolated_config import isolate
 
 STAT = "usage_usec {}\nuser_usec 0\nsystem_usec 0\n"
 
@@ -24,6 +25,7 @@ class Cgroups:
 
 class TheFleetsBudget(unittest.TestCase):
     def setUp(self):
+        isolate(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tree = Cgroups(tmp.name)
