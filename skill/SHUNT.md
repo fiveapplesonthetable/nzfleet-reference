@@ -348,3 +348,19 @@ What is left before it replaces nzfleet:
 - nzela needs a `.tachoproof/shot-rules.json` that matches the screenshot rules nzfleet applies today. Without one, shunt draws no shots.
 - Check that shunt matches what nzfleet does for the stall watch, owner mail and the runner pool. This has not been examined yet.
 - Do a shadow run beside nzfleet on one real train, comparing the decisions shunt makes against the ones nzfleet makes.
+
+## What to do next, from ba0ee66
+
+These three are yours. The nzela maintainers will do the parity verification and the shadow run beside nzfleet once they land.
+
+1. Ship the shot rules nzela needs. Without them, shunt draws no screenshots. Write a `tacho-shots.json` (or `.tachoproof/shot-rules.json`) that encodes what `nzfleet/shots.py` does today, and check it in under `examples/` so nzela can copy it. The mapping is: console is rooted at `frontend/admin/` with shots in `screenshots/`, and android at `frontend/android/` with shots in `docs/screenshots/`. The generated prefixes are `frontend/admin/screenshots/`, `frontend/admin/docs/` and `frontend/android/docs/`. The golden lists are `screenshots.golden` beside each shot directory. Screen aliases are in `ALIASES`, the shared Compose directories that redraw every light state are in `SHARED_COMPOSE`, and the files that move no pixel are in `MOVES_NO_PIXEL`. If `ShotRules` cannot express aliases, shared directories or the no-pixel pattern, add those fields rather than leaving them out. Add a test that loads the example and gives the same `stray()` answers as `nzfleet/shots.py` on a handful of real file lists.
+
+2. Write the parity table. For each of the three behaviours below, read the nzfleet code, find the shunt code that does the same thing, and add a test for every behaviour that has no counterpart yet:
+
+   - The stall watch is in `supervise.py`, `supervise_tick.py`, `progress.py`, `watchdog.py` and `attention.py`: when an agent counts as stalled, when it is nudged, when it is restarted, and when the owner is told.
+   - Owner mail is in `mail.py`, `owner.py`, `owner_tick.py` and `redact.py`: what is mailed and how often, what is deduplicated, and what is redacted.
+   - The runner pool is in `runner/` and `machine.py`: job-start hooks, prune, the trust check and warm caches.
+
+   Put the result in `docs/parity.md` with one row per behaviour, giving the nzfleet location, the shunt location and the test name, or "missing" when there is no counterpart.
+
+3. Add a dry-run mode for the daemon. In it, the daemon observes and decides but executes nothing, and logs each decision as one JSON line. A shadow run needs exactly this: shunt watching the same fleet as nzfleet without touching anything, so the two decision streams can be diffed.
