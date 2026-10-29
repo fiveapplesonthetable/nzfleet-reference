@@ -326,3 +326,25 @@ One commit since 35bbdfb, and it goes through the list from last time. I read th
 7. Process CPU now includes `cutime` and `cstime` (`observe.rs:68`). That time only grows when a child is reaped, so a worker that reaps a batch of children looks like it moved. This is minor, but it changes the stall verdict.
 
 **Verdict:** closer again. The tidy and the `unsafe` blockers are gone. Points 1, 2 and 5 should be fixed before it runs beside nzfleet: 1 and 2 because a test run could mail the owner or run a sudo prune, and 5 because a train could claim a proof that never ran. Parity for the stall watch, mail and the runner pool has still not been looked at.
+
+## Where shunt stands at ba0ee66
+
+All seven points from a56babb are fixed. I built it and ran it: `scripts/test-suite.sh` on the 1.98 toolchain passed 1046 tests and failed none, and it left no `yes` burner behind.
+
+Fixed:
+
+- Integration tests set `TACHO_TEST_MODE` and drop `TACHO_NOTIFY` and `TACHO_ROOT_PRUNE`, and the test check also looks at parent processes.
+- The `Hands` defaults are inert again.
+- The prune refuses to run in a test unless a test helper is named.
+- The target command has the same lifeline and hard cap as the burners.
+- The train no longer counts the CI-proof areas as passed.
+- The layout guess in `load_shot_rules` is gone.
+- CPU ticks count only the process's own time.
+
+Two additions are good: a Gradle daemon registry for each run, and configured secret values scrubbed from mail.
+
+What is left before it replaces nzfleet:
+
+- nzela needs a `.tachoproof/shot-rules.json` that matches the screenshot rules nzfleet applies today. Without one, shunt draws no shots.
+- Check that shunt matches what nzfleet does for the stall watch, owner mail and the runner pool. This has not been examined yet.
+- Do a shadow run beside nzfleet on one real train, comparing the decisions shunt makes against the ones nzfleet makes.
