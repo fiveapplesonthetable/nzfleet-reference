@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import yaml
 
-from . import docker_budget, plan
+from . import docker_budget, plan, tmpdirs
 
 TUNING = ("CARGO_PROFILE_DEV_DEBUG", "CARGO_PROFILE_TEST_DEBUG", "CARGO_INCREMENTAL")
 NOT_STARTED = 97
@@ -319,6 +319,8 @@ def run_on_host(area: str, root: str, target: str, slot: list, out, name: str = 
             with open(path, "w"):
                 pass
             env[f"GITHUB_{channel}"] = path
+        if area == "android":
+            env["GRADLE_OPTS"] = tmpdirs.with_gradle_registry(env["GRADLE_OPTS"], os.path.join(runner_files, "gradle-daemons"))
         with CpuMeter([unit], scopes=scopes) as meter:
             child = subprocess.Popen(argv, cwd=root, env=env, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
             if stop:

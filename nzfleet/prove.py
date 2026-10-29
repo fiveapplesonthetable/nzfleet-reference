@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import time
 
-from . import areas, config, plan, procs, world
+from . import areas, config, plan, procs, tmpdirs, world
 from .config import GRADLE_SLOT, SCCACHE
 
 LIMIT = 60 * 60  # one check; a cold cargo build on a loaded machine is the longest thing here
@@ -41,10 +41,12 @@ def tree_of_files(wt: str) -> str:
             pass
 
 
-def check_environment(check: plan.Check, inherited: dict, rust_cache: dict, gradle_slot: str, base: str) -> dict:
-    """Adds the base and only the cache and Android slot needed by a selected proof command."""
+def check_environment(check: plan.Check, inherited: dict, rust_cache: dict, gradle_slot: str, base: str, run_dir: str) -> dict:
+    """Adds the base and only the cache and Android slot needed by a selected proof command, and keeps its Gradle
+    daemons in a registry under `run_dir` so no other scope's daemon is ever reused."""
     # The compatibility, limit and console-wait checks diff against it and refuse to run without it.
     env = dict(inherited, NZELA_BASE=base)
+    env["GRADLE_OPTS"] = tmpdirs.with_gradle_registry(inherited.get("GRADLE_OPTS", ""), f"{run_dir}/gradle-daemons")
     if check.cmd[0] == "cargo" or check.name == "conservative checks":
         env.update(rust_cache)
     if check.name == "conservative checks" and gradle_slot:
@@ -121,7 +123,7 @@ def prove(say=print) -> int:
         log = os.path.join(proof_dir, f"{i:02d}-{check.name.split(':')[0].replace(' ', '-')}.log")
         say(f"[{i}/{len(checks)}] {check.name}  ({' '.join(check.cmd)[:100]})")
         started = time.monotonic()
-        env = check_environment(check, os.environ, rust_cache, GRADLE_SLOT, base)
+        env = check_environment(check, os.environ, rust_cache, GRADLE_SLOT, base, proof_dir)
         code = run_check(argv, os.path.join(wt, check.cwd), log, say, env=env)
         with open(log, errors="replace") as f:
             text = f.read()

@@ -16,6 +16,14 @@ class Environment(unittest.TestCase):
         env = tmpdirs.environment("/t/a", {"JAVA_TOOL_OPTIONS": "-Xmx2g -Djava.io.tmpdir=/tmp"})
         self.assertEqual(env["JAVA_TOOL_OPTIONS"], "-Xmx2g -Djava.io.tmpdir=/t/a")
 
+    def test_gradle_daemons_register_under_the_directory(self):
+        env = tmpdirs.environment("/t/a", {"GRADLE_OPTS": "-Dorg.gradle.workers.max=2"})
+        self.assertEqual(env["GRADLE_OPTS"], "-Dorg.gradle.workers.max=2 -Dorg.gradle.daemon.registry.base=/t/a/gradle-daemons")
+
+    def test_a_registry_already_chosen_is_kept(self):
+        env = tmpdirs.environment("/t/b", {"GRADLE_OPTS": "-Dorg.gradle.daemon.registry.base=/t/a/gradle-daemons"})
+        self.assertEqual(env["GRADLE_OPTS"], "-Dorg.gradle.daemon.registry.base=/t/a/gradle-daemons")
+
     def test_a_task_key_cannot_climb_out_of_the_root(self):
         self.assertEqual(tmpdirs.agent_directory("/t", "../x/y"), "/t/..-x-y")
 

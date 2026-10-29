@@ -130,7 +130,39 @@ class TheEnvironmentAJobGetsForTheCachesMountedIntoIt(unittest.TestCase):
         self.assertIn("AllowedCPUs=36,37", captured["argv"])
         self.assertIn("taskset", captured["argv"])
         self.assertEqual(captured["env"]["JAVA_TOOL_OPTIONS"], "-XX:ActiveProcessorCount=2")
-        self.assertEqual(captured["env"]["GRADLE_OPTS"], "-Dorg.gradle.workers.max=2")
+        self.assertTrue(captured["env"]["GRADLE_OPTS"].startswith("-Dorg.gradle.workers.max=2 "))
+
+    def android_env(self):
+        class Meter:
+            seconds = 0.0
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                return None
+        import yaml
+        with open(CI) as source:
+            current = plan.job_for(yaml.safe_load(source), "android", {})
+        captured = {}
+        def start(argv, **kwargs):
+            captured["env"] = kwargs["env"]
+            captured["registry"] = [o for o in kwargs["env"]["GRADLE_OPTS"].split() if o.startswith("-Dorg.gradle.daemon.registry.base=")]
+            return SimpleNamespace(pid=17)
+        usage = SimpleNamespace(ru_utime=0.0, ru_stime=0.0)
+        with patch.object(areas, "CpuMeter", return_value=Meter()), \
+             patch.object(areas, "user_scopes", return_value=True), \
+             patch.object(areas.subprocess, "Popen", side_effect=start), \
+             patch.object(areas.os, "wait4", return_value=(17, 0, usage)):
+            areas.run_on_host("android", "/work", "/target", ["gradle-slot"], io.BytesIO(), job=current)
+        return captured["registry"]
+
+    def test_the_android_area_keeps_gradle_daemons_in_a_registry_of_its_own_run(self):
+        registry = self.android_env()
+        self.assertEqual(len(registry), 1)
+        path = registry[0].split("=", 1)[1]
+        self.assertTrue(os.path.basename(os.path.dirname(path)).startswith("nzela-gh-"), path)
+
+    def test_two_android_runs_never_share_a_daemon_registry(self):
+        self.assertNotEqual(self.android_env(), self.android_env())
 
     def tree(self, wrapper=True):
         root = tempfile.mkdtemp()

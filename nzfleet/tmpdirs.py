@@ -20,12 +20,26 @@ def _with_property(existing: str, directory: str) -> str:
     return f"{kept} -Djava.io.tmpdir={directory}".strip()
 
 
+REGISTRY = "-Dorg.gradle.daemon.registry.base="
+
+
+def with_gradle_registry(opts: str, directory: str) -> str:
+    """GRADLE_OPTS naming `directory` as where this process's Gradle daemons register, unless it already names one.
+
+    Daemons share a registry by default, so a build connects to an idle daemon that another scope started, and
+    systemd kills it when that scope stops."""
+    if REGISTRY in opts:
+        return opts
+    return f"{opts} {REGISTRY}{directory}".strip()
+
+
 def environment(directory: str, env: dict) -> dict:
     """`env` with TMPDIR, and the JVM property Gradle, its test workers and Robolectric use instead, set to `directory`.
 
     JAVA_TOOL_OPTIONS reaches every JVM a build forks, which a gradle.properties jvmargs line does not."""
     return {**env, "TMPDIR": directory, "TMP": directory, "TEMP": directory,
-            "JAVA_TOOL_OPTIONS": _with_property(env.get("JAVA_TOOL_OPTIONS", ""), directory)}
+            "JAVA_TOOL_OPTIONS": _with_property(env.get("JAVA_TOOL_OPTIONS", ""), directory),
+            "GRADLE_OPTS": with_gradle_registry(env.get("GRADLE_OPTS", ""), f"{directory}/gradle-daemons")}
 
 
 def runner_dropin(root: str) -> str:
