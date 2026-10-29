@@ -302,3 +302,27 @@ On the earlier points. The root-disk prune is fixed: `prune_runner_volumes_comma
 New problems. The test-harness detection was removed. The owner mail is now suppressed only by `cfg!(test)`, which is false in integration tests and in the `tacho` binary they spawn, so a shell with `TACHO_NOTIFY` exported would mail the owner from `cargo test`. The old `TACHO_TEST_NOTIFY_CMD` route is gone with it. The daemon's `notify_owner` only fires when an appender exists, so `execute_decide_tick` with none notifies nobody. The burner now uses `unsafe` `pre_exec` with `prctl(PDEATHSIG)` and `alarm` (`starve.rs:262`), which closes the SIGKILLed-runner leak, but nzela's rule is no `unsafe`; shunt's own policy was not checked. The fleet-root fallback no longer counts the store home's parent, which is the narrowing I asked for.
 
 Verdict: it is much closer, and nothing I read can kill a live worker or lose data, but I would still not run it beside nzfleet yet. What blocks it is the actions tidy, which does nothing without a real lister, the empty-default shot rules at `train.rs:409` plus the missing rules file for nzela, the weakened notification guard in tests, and the fact that parity for the stall watch, mail and the runner pool has still not been examined.
+
+## Where shunt stands at a56babb
+
+One commit since 35bbdfb, and it goes through the list from last time. I read the whole diff but have not run the suite on this commit yet.
+
+**Fixed.** The Actions tidy now works against a real forge. `CliForgePlugin` lists caches and artifacts with `gh api --paginate`, and the parsers handle concatenated pages. A missing repository is now an error instead of a quiet no-op, and the repository name falls back to `REPO` and `GITHUB_REPOSITORY`. The train's redraw at `train.rs:409` uses `load_shot_rules(cwd)`. The burner no longer uses `unsafe`: `starve.rs` is `#![forbid(unsafe_code)]`, and each burner gets a stdin lifeline so that EOF or the read timeout kills its process group. The CI-proof SHA is found from git history rather than only from `TACHO_CI_PROOF_SHA`, and a missing passed batch is now a reason to wait instead of a silent pass. Stall notifications reset when an agent moves again. The burner reaper only touches burners inside an agent's process tree, worktree or cgroup.
+
+**Still open, or new:**
+
+1. The test guard on notifications still misses the spawned binary. `running_in_test_harness` covers in-process test binaries through the `deps/<name>-<hash>` check. But plain `cargo test` sets none of `RUST_TEST_THREADS`, `NEXTEST` or `TACHO_TEST_MODE`, and nothing in the tree sets `TACHO_TEST_MODE`. So a `target/debug/tacho` spawned by an integration test, in a shell that exports `TACHO_NOTIFY`, still mails the owner. Integration tests should set `TACHO_TEST_MODE=1` on the commands they spawn, or clear `TACHO_NOTIFY`.
+
+2. The default `Hands` methods now act for real. `Hands::notify_owner` calls the notify command, and `prune_root_disk_volumes` runs `sudo -n tacho-runner-prune check` whenever the helper is installed (`exec/mod.rs:79-86`). Any test or other `Hands` that relies on the defaults now has side effects. Previously the defaults were inert and only `DaemonHands` acted. The defaults should stay inert and `DaemonHands` should keep the real calls. As it stands, the prune has no test-harness guard at all.
+
+3. `DaemonHands::notify_owner` dropped its `appender.is_some()` check, which is what I asked for. Combined with point 2, though, every daemon path now notifies.
+
+4. The starved target command lost its hard cap. `configure_burner_process` now ignores `timeout_secs`, so the target's only limit is the parent's deadline loop at `starve.rs:393`. If `tacho` is SIGKILLed, the burners die through the lifeline but the target lives on in its own process group, uncapped. It needs the same lifeline wrapper as the burners.
+
+5. The synthetic train batch is marked `status: "passed"` with `areas` set to the extra CI-proof areas (`train.rs:440-450`), before any of those areas have run. If `make_train` or anything downstream reads those areas as proven, the train claims a proof it does not have. If nothing reads them, they should stay empty, and the real batch should carry them.
+
+6. `load_shot_rules` without a rules file guesses from the layout. It maps `frontend/admin` to "console" and any other directory under `frontend/` or `apps/` to its own name. That is nzela's layout written into the core again, only less visibly. nzela should ship `.tachoproof/shot-rules.json`, and the guess should go.
+
+7. Process CPU now includes `cutime` and `cstime` (`observe.rs:68`). That time only grows when a child is reaped, so a worker that reaps a batch of children looks like it moved. This is minor, but it changes the stall verdict.
+
+**Verdict:** closer again. The tidy and the `unsafe` blockers are gone. Points 1, 2 and 5 should be fixed before it runs beside nzfleet: 1 and 2 because a test run could mail the owner or run a sudo prune, and 5 because a train could claim a proof that never ran. Parity for the stall watch, mail and the runner pool has still not been looked at.
