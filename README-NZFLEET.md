@@ -87,7 +87,7 @@ Dependencies from a registry are compiled through one sccache in `$NZFLEET_HOME/
 
 Tests: `python3 -m unittest discover tests`.
 
-Every Claude agent nzfleet launches gets `--settings` with a PreToolUse hook (`hooks/no-background-bash.py`) that denies Bash with `run_in_background`: the session exits with its final message and takes the command with it.
+Every Claude agent nzfleet launches gets `--settings` with a PreToolUse hook (`hooks/worker-bash.py`) that denies Bash with `run_in_background`, because the session exits with its final message and takes the command with it, and any `git stash`, because the stash is one ref shared by every worktree and a pop can apply another agent's work. To make a test fail first, a worker saves its change with `git diff -- <paths> > $TMPDIR/x.patch && git checkout -- <paths>` and restores it with `git apply`.
 
 ## A fresh machine
 

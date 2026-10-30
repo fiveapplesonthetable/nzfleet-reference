@@ -205,7 +205,7 @@ class Dispatching(Fleet):
         self.dispatch()
         argv, _ = self.launched[0]
         settings = argv[argv.index("--settings") + 1]
-        self.assertIn("no-background-bash.py", open(settings).read())
+        self.assertIn("worker-bash.py", open(settings).read())
 
     def test_a_command_that_is_not_claude_gets_no_settings_flag(self):
         self.assertEqual(dispatch.with_settings(["codex", "exec"], "/s.json"), ["codex", "exec"])

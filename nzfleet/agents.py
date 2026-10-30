@@ -10,7 +10,7 @@ from . import blocked, config, dispatch, machine, plan, procs, rebases, runs, se
 
 from .config import AGENT as COMMAND, AGENT_CLAUDE, AGENT_CODEX, FORK, PREAMBLE, REPO, WORK
 LOGS = os.path.join(state.HOME, "agents")
-HOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks", "no-background-bash.py")
+HOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks", "worker-bash.py")
 LIMIT = 3 * 3600
 
 

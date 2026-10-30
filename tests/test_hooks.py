@@ -80,8 +80,8 @@ class Settings(unittest.TestCase):
             self.assertTrue(os.access(os.path.join(HOOKS, name), os.X_OK), name)
 
 
-class NoBackgroundBash(unittest.TestCase):
-    HOOK = os.path.join(os.path.dirname(__file__), "..", "hooks", "no-background-bash.py")
+class WorkerBash(unittest.TestCase):
+    HOOK = os.path.join(os.path.dirname(__file__), "..", "hooks", "worker-bash.py")
 
     def run_hook(self, **tool_input):
         done = subprocess.run(["python3", "-I", self.HOOK], input=json.dumps({"tool_input": {"command": "make", **tool_input}}),
@@ -96,3 +96,25 @@ class NoBackgroundBash(unittest.TestCase):
     def test_a_foreground_call_is_allowed(self):
         self.assertEqual(self.run_hook(timeout=600000)[0], 0)
         self.assertEqual(self.run_hook(run_in_background=False)[0], 0)
+
+    def command(self, text):
+        done = subprocess.run(["python3", "-I", self.HOOK], input=json.dumps({"tool_input": {"command": text}}),
+                              capture_output=True, text=True)
+        return done.returncode, done.stderr
+
+    def test_every_form_of_git_stash_is_denied_and_names_the_alternative(self):
+        for text in ("git stash", "git stash pop", "git -C /w stash list", "git -c user.name=x stash push -- a.rs",
+                     "cd w && git stash", "make; git stash", "git log | git stash", "FOO=1 git stash",
+                     "/usr/bin/git --no-pager stash", "bash -c 'cargo test && git stash pop'", "echo hi\ngit stash",
+                     "(git stash)", "git --git-dir=.git stash"):
+            with self.subTest(text):
+                code, why = self.command(text)
+                self.assertEqual(code, 2)
+                self.assertIn("git revert --no-commit", why)
+                self.assertIn("shared by every worktree", why)
+
+    def test_a_command_that_only_mentions_stash_is_allowed(self):
+        for text in ("grep -rn 'git stash' docs", "git commit -m 'never run git stash here'", "echo git stash",
+                     "git log --grep=stash", "git status && git diff", "git stashes", "git checkout -- stash", "git commit -m \"it's\""):
+            with self.subTest(text):
+                self.assertEqual(self.command(text)[0], 0)
