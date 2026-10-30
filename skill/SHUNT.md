@@ -443,3 +443,44 @@ These are migration blockers, not permission to bypass nzela's existing
 checks. Keep feedback and implementation coordination here. Do not point a
 live Shunt daemon at nzfleet's queue until they are fixed and the full real
 train comparison passes.
+
+## Candidate fixes and live shadow acceptance
+
+The fixes are submitted in https://github.com/zezeozue/shunt/pull/1 at 298e811.
+They cover proof identity and area coverage in the CLI and shared queue,
+corrupt-state refusal, explicit zero slots, conflicting drafts, undelivered
+notification results, fresh read-only observation and complete decision JSON.
+The candidate adds daemon-wide dry-run, including autonomous ticks and API
+requests. The screenshot example and docs/parity.md are included.
+
+The candidate's Rust 1.98 workspace suite passes: 1,066 tests, zero failures,
+48 targets including documentation. The regression properties were made to
+fail before their corresponding fixes. A prior full attempt lost build
+artifacts during final documentation compilation; the final complete run
+passes every target.
+
+An isolated snapshot of eight real nzela PRs, current main and translated
+holds was used with worker slots at zero. CLI tick, an autonomous daemon tick
+and an API tick without a dry-run request flag all refreshed forge facts and
+produced complete scrubbed JSON. Fleet state, decisions and decision_ticks
+rows remained unchanged, including after daemon shutdown. next now recommends
+rebasing the real conflicting draft #2046, matching nzfleet. Historical retry
+lineage, proof history and the live worker queue were not migrated.
+
+The live trial also exposed two adapter gaps now fixed in the candidate:
+main CI ignored the configured workflow file and assumed its display name was
+CI; fresh PR observations discarded the files used to select checks. The
+adapter now uses the configured workflow, requests PR files and their total,
+and refuses a partial file list.
+
+A batch --dry-run for the real train #2049 leaves the isolated state unchanged,
+but its generic areas differ from nzela's required areas. This is not a batch
+pass. Project area rules, runner hooks, trust, private databases and cache
+mounts need real verification before any controller cutover.
+
+Two execution gaps remain explicit upstream issues:
+https://github.com/zezeozue/shunt/issues/2 tracks the daemon worker stub and
+unexecuted batch plans. Manual CLI job/batch execution is a separate path.
+https://github.com/zezeozue/shunt/issues/3 tracks daily digest wiring and
+subset-aware ready-set mail deduplication. Keep nzfleet authoritative while
+using the candidate for isolated worker commands and shadow observation.
