@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
+import json
 import os
 import re
 import sys
@@ -94,9 +96,23 @@ def _related(args) -> int:
     elif args.area == "deploy":
         chosen = related.deploy(paths, _deploy_checks("scripts/areas/deploy.sh"))
     elif args.area == "console-specs":
-        modules = {**_read_tree("frontend/admin/e2e", (".ts", ".tsx")), **_read_tree("frontend/admin/fixtures", (".ts", ".tsx", ".mjs")),
-                   **_read_tree("frontend/admin/src", (".ts", ".tsx", ".mjs"))}
-        chosen = related.console_specs(paths, modules)
+        extensions = related.source_extensions()
+        modules = {**_read_tree("frontend/admin/e2e", (".ts", ".tsx")), **_read_tree("frontend/admin/fixtures", extensions),
+                   **_read_tree("frontend/admin/src", extensions)}
+        try:
+            saved = json.loads(_read("frontend/admin/e2e/source-coverage.json"))
+            names = sorted(path.removeprefix("frontend/admin/e2e/") for path in modules
+                           if path.endswith(".spec.ts") and not path.endswith(("api.spec.ts", "crawl.spec.ts", "long-tasks.spec.ts")))
+            hashes = {name: hashlib.sha256(_read("frontend/admin/e2e/" + name).encode()).hexdigest()
+                      for name in names}
+            dynamic = {path.removeprefix("frontend/admin/"):
+                       hashlib.sha256(text.encode()).hexdigest()
+                       for path, text in modules.items() if path.startswith("frontend/admin/src/")
+                       and re.search(r"\bimport\s*\(", text)}
+            coverage = saved["sources"] if saved["specs"] == hashes and saved["dynamicFiles"] == dynamic else None
+        except (OSError, ValueError, KeyError, TypeError):
+            coverage = None
+        chosen = related.console_specs(paths, modules, coverage)
     else:
         modules = _read_tree("frontend/admin/src", (".ts", ".tsx", ".mjs"))
         modules.update(_read_tree("frontend/admin/tests", (".ts", ".tsx", ".mjs")))

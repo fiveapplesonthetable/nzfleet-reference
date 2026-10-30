@@ -10,7 +10,7 @@ import shutil
 import sys
 import time
 
-from . import agents, batch, blocked, choice, cloud, codehost, config, db, event_log, holds, janitor, jev, journeys_run, land, machine, openpr, owner, plan, procs, progress, prove as prover, runs, selfupdate, shotsfix, serve as serving, setup as bootstrap, starve as starving, state, status_view, supervise_tick, tick, tidy as tidying, top as topview, train, triage as triaging, trainrun, units, warm, watchdog, work, world
+from . import agents, batch, blocked, choice, cloud, codehost, config, db, event_log, holds, janitor, jev, journeys_run, land, machine, openpr, owner, plan, procs, progress, prove as prover, runs, selfupdate, shotsaccept, shotsfix, serve as serving, setup as bootstrap, starve as starving, state, status_view, supervise_tick, tick, tidy as tidying, top as topview, train, triage as triaging, trainrun, units, warm, watchdog, work, world
 
 
 def _files(files: list) -> str:
@@ -360,6 +360,22 @@ def shots_fix(args) -> int:
     return shotsfix.fix(args.ref, args.report or "", args.report_url or "", args.area or None)
 
 
+def shots_accept(args) -> int:
+    top = world.git("rev-parse", "--show-toplevel", cwd=os.getcwd()).strip()
+    git = lambda *a: world.git(*a, cwd=top)
+    try:
+        written = shotsaccept.accept(shotsaccept.run_dir(args.run), top, args.area or ["console", "android"], args.all, args.force, git)
+    except shotsaccept.Refused as e:
+        print(f"refused: {e}")
+        return 1
+    for path in written:
+        print(f"wrote {path}")
+    if written:
+        git("add", "--", *written)
+    print(f"{len(written)} image(s) written and staged; commit them with the change that moved them" if written else "nothing to copy")
+    return 0
+
+
 def prove(_args) -> int:
     return prover.prove()
 
@@ -617,7 +633,7 @@ def main(argv) -> int:
     st.add_argument("slug", help="what becomes true, as the branch name: a-held-rate-can-be-discarded")
     st.add_argument("--base", default="main", help="main, or the number of the PR this one stacks on")
     st.set_defaults(fn=start)
-    sf = sub.add_parser("shots", help="screenshots: `shots fix <pr-or-ref>` says why a golden moved and settles the intended ones")
+    sf = sub.add_parser("shots", help="screenshots: `shots fix <pr-or-ref>` says why a golden moved; `shots accept <run>` takes a batch's images")
     sfs = sf.add_subparsers(dest="shots_cmd", required=True)
     sff = sfs.add_parser("fix", help="classify each moved golden: canvas break (never commit), intended (commit to the branch), drift (report)")
     sff.add_argument("ref", help="a PR number, a branch or `main`")
@@ -625,6 +641,12 @@ def main(argv) -> int:
     sff.add_argument("--report-url", help="where the report can be read, for the commit body")
     sff.add_argument("--area", action="append", choices=["console", "android"], help="draw only this area (repeatable)")
     sff.set_defaults(fn=shots_fix)
+    sfa = sfs.add_parser("accept", help="copy a batch's after images of the moved goldens into this checkout and stage them")
+    sfa.add_argument("run", help="a run id such as manual-1793044342, or the path of a run directory")
+    sfa.add_argument("--area", action="append", choices=["console", "android"], help="only this area (repeatable)")
+    sfa.add_argument("--all", action="store_true", help="every image that moved, not only the goldens")
+    sfa.add_argument("--force", action="store_true", help="copy although the run was not drawn from this checkout's changes")
+    sfa.set_defaults(fn=shots_accept)
     sub.add_parser("prove", help="run the checks this change calls for, here, in the foreground").set_defaults(fn=prove)
     wt = sub.add_parser("wait", help="wait up to 9 minutes for a process: exit 0 it ended, 3 call again")
     wt.add_argument("target", help="a name given to `run`, or a pid")

@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 
 EVERYTHING = "*"
+
+
+def source_extensions() -> tuple[str, ...]:
+    """Read the file types shared with the browser coverage generator."""
+    return tuple(json.loads((Path(__file__).resolve().parents[4] /
+                             "frontend/admin/e2e/source-extensions.json").read_text(encoding="utf-8")))
 
 _FLEET_MODULE = re.compile(r"^tools/nzfleet/nzfleet/([A-Za-z0-9_]+)(?:\.py|/.+\.py)$")
 _FLEET_TEST = re.compile(r"^tools/nzfleet/tests/(test_[A-Za-z0-9_]+)\.py$")
 _IMPORT_LINE = re.compile(r"^\s*(?:from|import)\s.*$", re.M)
+_CONSOLE_IMPORT = re.compile(r"(?:from\s*|import\s+)['\"]([.@][^'\"]+)['\"]")
 
 
 def fleet(paths: list, tests: dict, modules: dict | None = None) -> list:
@@ -72,18 +81,49 @@ def console(paths: list, modules: dict, tests: set) -> list:
     return [path.removeprefix(plan.ADMIN) for path in chosen.get("tests", [])]
 
 
-def console_specs(paths: list, modules: dict) -> list:
-    """The browser specs that can read a changed file, as paths under frontend/admin."""
+def console_specs(paths: list, modules: dict, coverage: dict | None = None) -> list:
+    """The browser specs reached by a changed source, or every spec when coverage cannot prove the selection."""
     from ..devloop import plan
 
     changed = {path for path in paths if path}
-    specs = sorted(path for path in modules if path.startswith(plan.ADMIN + "e2e/") and path.endswith(".spec.ts"))
-    # Browser navigation loads application modules without importing them from the spec.
-    if any(path.startswith((plan.ADMIN + "src/", plan.ADMIN + "scripts/")) or
-           re.match(r"^frontend/admin/(?:package(?:-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.ts|playwright[^/]*\.ts|index\.html|\.env(?:\..*)?)$", path)
+    specs = sorted(path for path in modules if path.startswith(plan.ADMIN + "e2e/") and path.endswith(".spec.ts")
+                   and not path.endswith(("api.spec.ts", "crawl.spec.ts", "long-tasks.spec.ts")))
+    if coverage is None or set(coverage) != {spec.removeprefix(plan.ADMIN + "e2e/") for spec in specs
+                                                  if spec.removeprefix(plan.ADMIN + "e2e/") not in
+                                                  {"api.spec.ts", "crawl.spec.ts", "long-tasks.spec.ts"}}:
+        return [spec.removeprefix(plan.ADMIN) for spec in specs]
+    if any(path.startswith(plan.ADMIN + "e2e/") and not path.endswith(".ts") for path in changed):
+        return [spec.removeprefix(plan.ADMIN) for spec in specs]
+    if any(path.startswith(plan.ADMIN) and not path.startswith(plan.ADMIN + "e2e/") and
+           (not path.startswith(plan.ADMIN + "src/") or
+            path.endswith(".css") or path.startswith(plan.ADMIN + "src/app/") or
+            path == plan.ADMIN + "src/components/layout.tsx" or
+            not any(path.removeprefix(plan.ADMIN) in sources for sources in coverage.values()))
            for path in changed):
         return [spec.removeprefix(plan.ADMIN) for spec in specs]
-    return [spec.removeprefix(plan.ADMIN) for spec in specs if spec in changed or plan.closure(spec, modules) & changed]
+    importers = {}
+    extensions = source_extensions()
+    for importer, text in modules.items():
+        if not importer.startswith(plan.ADMIN + "src/"):
+            continue
+        for named in _CONSOLE_IMPORT.findall(text):
+            base = plan.ADMIN + "src/" + named[2:] if named.startswith("@/") else importer.rsplit("/", 1)[0] + "/" + named
+            joined = plan.normalise(base)
+            for candidate in (joined, *(joined + ext for ext in extensions),
+                              *(f"{joined}/index{ext}" for ext in extensions)):
+                if candidate in modules:
+                    importers.setdefault(candidate, set()).add(importer)
+                    break
+    reaching = set(changed)
+    pending = list(changed)
+    while pending:
+        for importer in importers.get(pending.pop(), ()):
+            if importer not in reaching:
+                reaching.add(importer)
+                pending.append(importer)
+    return [spec.removeprefix(plan.ADMIN) for spec in specs if spec in changed or
+            plan.closure(spec, modules) & changed or
+            any(plan.ADMIN + source in reaching for source in coverage.get(spec.removeprefix(plan.ADMIN + "e2e/"), []))]
 
 
 def deploy(paths: list, checks: list) -> list:

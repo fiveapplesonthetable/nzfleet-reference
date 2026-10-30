@@ -38,7 +38,7 @@ def _bytes(shots_dir: str, area: str, side: str, path: str):
         return None
 
 
-def _moved(shots_dir: str, area: str, state: str, path: str, golden: set) -> bool:
+def has_moved(shots_dir: str, area: str, state: str, path: str, golden: set) -> bool:
     if state != "changed":
         return True
     return pixels.moved(_bytes(shots_dir, area, "before", path), _bytes(shots_dir, area, "after", path), path in golden)
@@ -48,19 +48,19 @@ def moved(shots_dir: str, golden: set) -> list:
     """The (state, path) pairs of a run that moved by more than rendering noise. Golden shots are compared exactly.
     Every one belongs to the train: the merged tree drew them, so no member's diff has to account for a shot."""
     return [(state, path) for area, files in redrawn(shots_dir).items() for state, path in files
-            if _moved(shots_dir, area, state, path, golden)]
+            if has_moved(shots_dir, area, state, path, golden)]
 
 
 def moved_summary(shots_dir: str, golden: set) -> str:
     """How many shots a run moved beyond rendering noise, and which screens they belong to."""
     return shots.summary([path for area, files in redrawn(shots_dir).items() for state, path in files
-                          if _moved(shots_dir, area, state, path, golden)])
+                          if has_moved(shots_dir, area, state, path, golden)])
 
 
 def moved_paths(shots_dir: str, golden: set) -> list:
     """The shots a run moved beyond rendering noise."""
     return [path for area, files in redrawn(shots_dir).items() for state, path in files
-            if _moved(shots_dir, area, state, path, golden)]
+            if has_moved(shots_dir, area, state, path, golden)]
 
 
 def unowned(shots_dir: str, touched: list, golden: set) -> list:

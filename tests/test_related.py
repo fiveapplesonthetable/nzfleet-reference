@@ -1,6 +1,9 @@
 """Which unit tests the pre-push hook runs for a change under tools/nzfleet or the console."""
 
 import unittest
+import json
+import subprocess
+from pathlib import Path
 
 from nzfleet.selection import related
 
@@ -80,12 +83,81 @@ class AConsoleChangeRunsTheBrowserSpecsThatCanNavigateToIt(unittest.TestCase):
                          ["e2e/home.spec.ts", "e2e/other.spec.ts"])
 
     def test_a_changed_spec_selects_only_itself(self):
-        self.assertEqual(related.console_specs(["frontend/admin/e2e/home.spec.ts"], self.modules),
+        coverage = {"home.spec.ts": [], "other.spec.ts": []}
+        self.assertEqual(related.console_specs(["frontend/admin/e2e/home.spec.ts"], self.modules, coverage),
                          ["e2e/home.spec.ts"])
 
     def test_a_build_configuration_change_selects_every_spec(self):
         self.assertEqual(related.console_specs(["frontend/admin/vite.config.ts"], self.modules),
                          ["e2e/home.spec.ts", "e2e/other.spec.ts"])
+class AConsoleSourceChangeRunsTheBrowserSpecsThatExecuteIt(unittest.TestCase):
+    modules = {
+        "frontend/admin/e2e/home.spec.ts": "import { test } from './bundle'\n",
+        "frontend/admin/e2e/senders.spec.ts": "import { test } from './bundle'\n",
+        "frontend/admin/src/pages/Home.tsx": "export const home = 1\n",
+        "frontend/admin/src/pages/Senders.tsx": "export const senders = 1\n",
+    }
+    coverage = {"home.spec.ts": ["src/pages/Home.tsx"], "senders.spec.ts": ["src/pages/Senders.tsx"]}
+
+    def test_a_mapped_page_selects_only_its_spec(self):
+        self.assertEqual(related.console_specs(["frontend/admin/src/pages/Home.tsx"], self.modules, self.coverage),
+                         ["e2e/home.spec.ts"])
+
+    def test_an_unmapped_source_selects_every_spec(self):
+        self.assertEqual(related.console_specs(["frontend/admin/src/pages/New.tsx"], self.modules, self.coverage),
+                         ["e2e/home.spec.ts", "e2e/senders.spec.ts"])
+
+    def test_a_changed_config_selects_every_spec(self):
+        self.assertEqual(related.console_specs(["frontend/admin/package.json"], self.modules, self.coverage),
+                         ["e2e/home.spec.ts", "e2e/senders.spec.ts"])
+
+    def test_shared_layout_and_styles_select_every_spec_even_when_mapped(self):
+        coverage = {name: [*sources, "src/app/SignedIn.tsx", "src/index.css"]
+                    for name, sources in self.coverage.items()}
+        for path in ("frontend/admin/src/app/SignedIn.tsx", "frontend/admin/src/index.css"):
+            self.assertEqual(related.console_specs([path], self.modules, coverage),
+                             ["e2e/home.spec.ts", "e2e/senders.spec.ts"])
+
+    def test_a_new_import_keeps_an_old_map_conservative(self):
+        modules = {**self.modules, "frontend/admin/src/pages/Home.tsx":
+                   "import { senders } from '@/pages/Senders'\n"}
+        self.assertEqual(related.console_specs(["frontend/admin/src/pages/Senders.tsx"], modules, self.coverage),
+                         ["e2e/home.spec.ts", "e2e/senders.spec.ts"])
+
+    def test_a_lazy_route_does_not_make_an_untouched_page_reach_its_screen(self):
+        modules = {**self.modules, "frontend/admin/src/app/routes.ts":
+                   "const Senders = lazy(() => import('@/pages/Senders'))\n"}
+        coverage = {name: [*sources, "src/app/routes.ts"] for name, sources in self.coverage.items()}
+        self.assertEqual(related.console_specs(["frontend/admin/src/pages/Senders.tsx"], modules, coverage),
+                         ["e2e/senders.spec.ts"])
+
+    def test_a_non_typescript_e2e_change_selects_every_spec(self):
+        for path in ("frontend/admin/e2e/fixtures/data.json", "frontend/admin/e2e/images/icon.svg"):
+            self.assertEqual(related.console_specs([path], self.modules, self.coverage),
+                             ["e2e/home.spec.ts", "e2e/senders.spec.ts"])
+
+    def test_the_generator_and_selector_use_the_same_source_extensions(self):
+        root = Path(__file__).resolve().parents[3]
+        extensions = json.loads((root / "frontend/admin/e2e/source-extensions.json").read_text())
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "import { sourceExtensions } from './frontend/admin/scripts/source-extensions.mjs'; "
+             "console.log(JSON.stringify(sourceExtensions))"],
+            cwd=root, check=True, capture_output=True, text=True,
+        )
+        self.assertEqual(related.source_extensions(), tuple(extensions))
+        self.assertEqual(json.loads(result.stdout), extensions)
+        for extension in (".cjs", ".jsx", ".js"):
+            self.assertIn(extension, extensions)
+
+    def test_a_javascript_import_reaches_its_mapped_spec(self):
+        for extension in (".cjs", ".jsx", ".js"):
+            source = f"frontend/admin/src/pages/Shared{extension}"
+            modules = {**self.modules, source: "export const shared = 1\n",
+                       "frontend/admin/src/pages/Home.tsx": "import './Shared'\n"}
+            coverage = {**self.coverage, "senders.spec.ts": [f"src/pages/Shared{extension}"]}
+            self.assertEqual(related.console_specs([source], modules, coverage),
+                             ["e2e/home.spec.ts", "e2e/senders.spec.ts"])
 
 
 if __name__ == "__main__":

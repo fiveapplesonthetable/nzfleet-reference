@@ -47,6 +47,8 @@ claim_slot() {
 cleanup() {
     # What the areas redrew outlives the worktree, for the branches the batch then commits it to.
     [ -d "$check_wt/shot-report" ] && cp -a "$check_wt/shot-report" "$run/shots"
+    held=$(awk -F'\t' '$3 == "golden" { print "  " $2 }' "$check_wt"/shot-report/*/changed.txt 2>/dev/null)
+    [ -n "$held" ] && printf 'golden screenshots moved:\n%s\nIf the change meant to move them, run in the branch: nzfleet shots accept %s\n' "$held" "$name"
     rm -rf -- "$check_wt"
     git -C "$repo" for-each-ref --format='%(refname)' "refs/nzf/check/$name/" | xargs -r -n1 git -C "$repo" update-ref -d
     docker rm -f "$pg" >/dev/null 2>&1

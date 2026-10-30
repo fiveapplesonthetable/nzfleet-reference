@@ -91,12 +91,12 @@ RULES = (
     # Every other script belongs to the area whose checks call it; a shared one names each caller.
     _rule(r"^scripts/(android-|local-android-|no-android-|no-shared-test-state|device\.sh|emulator)", "android"),
     _rule(r"^scripts/(console-capture-env|no-capture-network-idle|no-vague-console-waits)", "console"),
-    _rule(r"^scripts/(core-boundary|crate-|one-clock|restore-mtimes|rust-|rustc-wrapper|warm-target)", "rust"),
-    _rule(r"^scripts/(emulator|e2e-build|no-wall-clock-waits)", "e2e"),
-    _rule(r"^scripts/(console-capture-env-test|no-wall-clock-waits|step-cap-test|suite-caps)", "deploy", tiers=("change",)),
+    _rule(r"^scripts/(core-boundary|coverage_report|crate-|one-clock|restore-mtimes|rust-|rustc-wrapper|warm-target)", "rust"),
+    _rule(r"^scripts/(emulator|e2e-build|no-wall-clock-waits|no-rust-test-deadlines)", "e2e"),
+    _rule(r"^scripts/(console-capture-env-test|no-wall-clock-waits|no-rust-test-deadlines|step-cap-test|suite-caps)", "deploy", tiers=("change",)),
     _rule(r"^scripts/(query-validation-cache|record-wire-fixtures)", "compile", tiers=("train",)),
     _rule(r"^scripts/(query-validation-cache|record-wire-fixtures)", "rust"),
-    _rule(r"^scripts/coverage-floors$", "deploy", tiers=("change",)),
+    _rule(r"^scripts/coverage-floors$|^scripts/coverage_report", "deploy", tiers=("change",)),
     # Every workflow: which machine a job may ask for is asserted across all of them.
     _rule(r"^\.github/workflows/", "deploy", tiers=("change",)),
     _rule(r"^docs/book/|^tools/nzfleet/book/", "deploy", tiers=("change",)),

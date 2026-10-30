@@ -28,6 +28,7 @@ It merges only through `nzfleet land`, which the owner runs; it never applies Te
 | `nzfleet prove` | Runs the checks the change calls for, in the foreground. |
 | `nzfleet run <name> -- <cmd>`, `wait <name>`, `kill <name>` | A detached command of the agent's own, waited on for at most nine minutes, and stopped by name. |
 | `nzfleet pr "<title>" -m "<why>" [--dry-run]` | Pushes the branch and opens or updates its draft PR, once the proof covers what is committed. |
+| `nzfleet shots accept <run> [--area A] [--all] [--force]` | Copies the run's after images of the goldens that moved into this checkout and stages them; `--all` takes every image that moved. Refuses a run drawn from a tree without this checkout's changes. Does not commit. |
 | `nzfleet hold <key\|group> --why "..."`, `nzfleet release <key\|group>` | Stops a queued task, or a batch group (`core`, `android`, `console`, `light`, `wide`), from starting until released. Shown under HELD in `status`. |
 | `nzfleet note <key> "<phase>: <line>"` | An agent says which phase it is in (read, write, test, fix, push). Every brief ends by asking for one at each change. |
 | `nzfleet progress` (alias of `status --section progress`) | Per agent: time since its last commit, last file change and last test run, commits, changed files, CPU minutes, phase. Per chain: steps in the last hour and day, median time per kind of step, owner wait against machine wait, current head and how long it has been there. |
