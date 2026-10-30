@@ -364,3 +364,82 @@ These three are yours. The nzela maintainers will do the parity verification and
    Put the result in `docs/parity.md` with one row per behaviour, giving the nzfleet location, the shunt location and the test name, or "missing" when there is no counterpart.
 
 3. Add a dry-run mode for the daemon. In it, the daemon observes and decides but executes nothing, and logs each decision as one JSON line. A shadow run needs exactly this: shunt watching the same fleet as nzfleet without touching anything, so the two decision streams can be diffed.
+
+
+## Nzela acceptance at ba0ee66, 30 October
+
+The remote still ends at ba0ee66. Nzela's main CI and deploy are green. The
+requested example, docs/parity.md and daemon-wide dry-run are still absent.
+
+What was exercised against the real binary:
+
+- Progress verdicts and nudge/escalate choices match nzfleet in 352 input
+  scenarios around the 1,800- and 2,700-second thresholds, with and without
+  recent edits and CPU activity. This checks the pure rules, not the whole
+  supervisor's observation and intervention path.
+- A project ShotRules JSON, including aliases, shared Compose packages and
+  the exact screenshot-test marker, matches nzfleet.stray on all 1,461 actual
+  checked-in screenshot paths in 40 source/golden scenarios. Empty rules
+  disagree in all 40 scenarios. Nzela is preparing that config and a drift
+  test against its current constants. The no-pixel regex is still built into
+  Shunt; it cannot be expressed in this config.
+- An isolated store was populated from the seven real open PR heads and file
+  lists, current main and holds, with max_workers=0 and merge_prs=false.
+  next --json preferred an old area hold; nzfleet next correctly asked for
+  the conflicting draft PR #2046 to be rebased. tick --dry-run printed no
+  decisions. The isolated fleet_state, decisions and decision_ticks rows
+  were unchanged. This is a limited snapshot comparison, not proof of
+  full fleet equivalence: historical retries, batch proofs and chain state
+  have not been migrated.
+- The worker job/wait commands ran 68 real nzela selector, train and issue
+  transport tests successfully in a private test home. An initial invocation
+  correctly failed nzela's live-home protection; it was corrected to use a
+  private home. No notifier, dispatch or merge was enabled.
+
+Concrete blockers reproduced with the binary:
+
+1. **next recommends a stale pass.** Populate open_prs_cache with a draft
+   PR numbered 2045 at head new-head, and passed[2045] with sha old-head,
+   main_sha old-main, batch_id old-batch, passed_at 0, tree old-tree and
+   areas [deploy]. Set main_sha=new-main. next --json exits 0 and says
+   "ask the owner to land PR #2045". fleet/dispatch.rs compute_next_instruction
+   selects passed.keys without checking proof identity, draft, main ancestry
+   or covered areas, and discards the result of queue(). Use the same checked
+   readiness result in next, queue, notification and land. Add regressions
+   for changed head, unrelated main, draft, conflict, missing areas and a PR
+   absent from the live open list. Do not infer safety from a passed key.
+
+2. **Invalid persisted state opens slots.** Write the literal `{invalid json`
+   to fleet_state.state_json, then run next --json. It exits 0, says run tick
+   and reports four free slots. FleetStore::load uses
+   serde_json::from_str(&json).unwrap_or_default(). Return InvalidData with
+   the parse error instead. Do not reset worker limits, holds or proof history
+   when stored state is corrupt or incompatible. Also propagate serialization
+   errors in save instead of replacing them with an empty object.
+
+3. **Conflicting drafts disappear from next.** With a draft, CONFLICTING PR
+   and no pass, next says run tick. nzela's draft PRs are exactly the work
+   that needs rebasing before verification. Remove the !pr.draft filter from
+   conflict handling and test it with a real draft PR fixture.
+
+4. **Dry-run cannot observe or explain the real plan.** exec::run_tick skips
+   refresh_world whenever opts.dry_run is true; fleet/watch.rs constructs an
+   empty LiveState; print_dry_run omits proposed batches, resume tasks,
+   notification decisions and other plan fields. Split read-only observation
+   from persistence, expose the complete inputs and DecisionPlan as JSON,
+   and add a daemon-wide mode that never executes Hands or forge mutations.
+   Make every proposed action visible, including its reason. Test with a
+   fake forge returning different heads from the cache and side-effect
+   counters that must remain zero.
+
+5. **Notification failure is not the only undelivered result.** The notifier
+   API returns Ok(false) when nothing was sent, but exec/mod.rs only handles
+   Err and otherwise keeps the notification's deduplication key. Treat false
+   as undelivered (or explicitly disabled by policy) and retain pending
+   notification work. Check missing notifier, failed send, successful retry
+   and recovery. This finding is from code inspection, not a live mail trial.
+
+These are migration blockers, not permission to bypass nzela's existing
+checks. Keep feedback and implementation coordination here. Do not point a
+live Shunt daemon at nzfleet's queue until they are fixed and the full real
+train comparison passes.
