@@ -86,6 +86,10 @@ class Mapping(unittest.TestCase):
         checks = plan.proof_plan(files, TRACKED + files, "BASE")
         self.assertEqual([check.name for check in checks], ["whitespace", "secrets", "console capture tests"])
         self.assertEqual(checks[-1].cmd, ("npm", "run", "test:capture"))
+    def test_browser_worker_policy_has_a_console_proof(self):
+        checks = names(["frontend/admin/playwright.workers.ts"])
+        self.assertNotIn("conservative checks", checks)
+        self.assertIn("console unit tests", checks)
 
     def test_a_documentation_change_still_runs_the_secret_scan(self):
         self.assertEqual(names(["docs/ci-runners.md"]), ["whitespace", "secrets"])

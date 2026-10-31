@@ -796,7 +796,7 @@ def _rust_checks(files: list, tracked: set) -> list:
 
 
 _SPEC = re.compile(rf"^{ADMIN}/e2e/([^/]+\.spec\.ts)$")
-_CONSOLE_CODE = re.compile(rf"^{ADMIN}/(src/|tests/|package(-lock)?\.json$|tsconfig[^/]*\.json$|vite\.config|index\.html$)")
+_CONSOLE_CODE = re.compile(rf"^{ADMIN}/(src/|tests/|package(-lock)?\.json$|tsconfig[^/]*\.json$|vite\.config|playwright\.(config|workers)\.ts$|index\.html$)")
 _CONSOLE_PIXELS = re.compile(rf"^{ADMIN}/(src/|public/|index\.html$|scripts/(?:screenshots|capture)\.mjs$)")
 _CONSOLE_DEPENDENCIES = re.compile(rf"^{ADMIN}/package(-lock)?\.json$")
 _CONSOLE_CAPTURE_INPUTS = {f"{ADMIN}/scripts/capture.mjs", f"{ADMIN}/scripts/tests/capture-browser.test.mjs"}
