@@ -76,6 +76,20 @@ class Runs(unittest.TestCase):
         self.assertEqual(s["batches"]["b"]["status"], "green")
         self.assertEqual(s["passed"]["2"], {"sha": "s2", "main": "m", "order": [3, 1, 2], "batch": "b"})
 
+    def test_a_complete_pass_is_not_rejected_by_warning_text_in_its_output(self):
+        self.start([1, 2])
+        checks = FakeChecks()
+
+        def passing(name, areas, members):
+            result = checks(name, areas, members)
+            result["log"] = "fixture: ss: command not found\nall checks passed"
+            return result
+
+        batch.run("b", areas_of=lambda shas: frozenset(), check=passing)
+        record = state.read()
+        self.assertEqual(record["batches"]["b"]["status"], "green")
+        self.assertEqual(record["batches"]["b"]["passed"], [1, 2])
+
     def test_a_single_failed_member_is_recorded_after_one_check(self):
         self.start([1327])
         fake = FakeChecks(broken={1327})

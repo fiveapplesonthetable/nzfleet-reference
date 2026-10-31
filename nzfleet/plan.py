@@ -733,6 +733,8 @@ def _known_change(path: str, tracked: set) -> bool:
         return True
     if path.startswith(("docs/", f"{ADMIN}/docs/", f"{ADMIN}/screenshots/", f"{ANDROID}/docs/screenshots/")):
         return True
+    if path.startswith(("frontend/website/", ".sqlx/")):
+        return True
     if path in _WORKSPACE_FILES or path.startswith(".cargo/"):
         return True
     if path.startswith("crates/"):
@@ -740,6 +742,8 @@ def _known_change(path: str, tracked: set) -> bool:
         return f"crates/{crate}/Cargo.toml" in tracked
     if path.startswith(f"{ADMIN}/"):
         return bool(_CONSOLE_CODE.match(path) or _CONSOLE_PIXELS.match(path) or _SPEC.match(path)
+                    or path in _CONSOLE_CAPTURE_INPUTS
+                    or path.startswith(f"{ADMIN}/scripts/")
                     or path.startswith(f"{ADMIN}/e2e/") or path.startswith(f"{ADMIN}/docs/mocks/"))
     if path.startswith(f"{ANDROID}/") or path.startswith("tools/nzfleet/"):
         return True
@@ -767,6 +771,8 @@ def _rust_checks(files: list, tracked: set) -> list:
             suites.setdefault(crate, set()).add(rest[6:].split("/")[0].removesuffix(".rs"))
         else:
             whole.add(crate)
+    if not crates and any(f.startswith(".sqlx/") for f in files):
+        everything = True
     if not crates and not everything:
         return []
     scope = ("--workspace",) if everything else tuple(a for c in sorted(crates) for a in ("-p", c))
@@ -791,20 +797,33 @@ def _rust_checks(files: list, tracked: set) -> list:
 
 _SPEC = re.compile(rf"^{ADMIN}/e2e/([^/]+\.spec\.ts)$")
 _CONSOLE_CODE = re.compile(rf"^{ADMIN}/(src/|tests/|package(-lock)?\.json$|tsconfig[^/]*\.json$|vite\.config|index\.html$)")
-_CONSOLE_PIXELS = re.compile(rf"^{ADMIN}/(src/|public/|index\.html$|scripts/screenshots\.mjs$)")
+_CONSOLE_PIXELS = re.compile(rf"^{ADMIN}/(src/|public/|index\.html$|scripts/(?:screenshots|capture)\.mjs$)")
 _CONSOLE_DEPENDENCIES = re.compile(rf"^{ADMIN}/package(-lock)?\.json$")
+_CONSOLE_CAPTURE_INPUTS = {f"{ADMIN}/scripts/capture.mjs", f"{ADMIN}/scripts/tests/capture-browser.test.mjs"}
+_CONSOLE_SCRIPT_TEST = re.compile(rf"^{ADMIN}/scripts/tests/[^/]+\.test\.mjs$")
 
 
 def _console_checks(files: list, tracked: set) -> list:
-    code = any(_CONSOLE_CODE.match(f) for f in files)
+    script_change = any(f.startswith(f"{ADMIN}/scripts/") and not _CONSOLE_SCRIPT_TEST.match(f)
+                        and f not in _CONSOLE_CAPTURE_INPUTS and not _CONSOLE_PIXELS.match(f) for f in files)
+    code = script_change or any(_CONSOLE_CODE.match(f) for f in files)
     specs = {m.group(1) for f in files if (m := _SPEC.match(f))}
-    if any(f.startswith(f"{ADMIN}/e2e/") and not _SPEC.match(f) for f in files):
+    coverage_map = f"{ADMIN}/e2e/source-coverage.json"
+    if script_change or any(f.startswith(f"{ADMIN}/e2e/") and not _SPEC.match(f) and f != coverage_map for f in files):
         specs |= {m.group(1) for f in tracked if (m := _SPEC.match(f))}  # a shared helper: every spec uses it
-    shots = any(_CONSOLE_PIXELS.match(f) for f in files)
+    shots = script_change or any(_CONSOLE_PIXELS.match(f) for f in files)
     out = []
+    script_tests = sorted(f.removeprefix(f"{ADMIN}/") for f in files
+                          if _CONSOLE_SCRIPT_TEST.match(f) and f not in _CONSOLE_CAPTURE_INPUTS)
+    if script_tests:
+        out.append(Check("console script tests", ("node", "--test", *script_tests), ADMIN))
+    if set(files) & _CONSOLE_CAPTURE_INPUTS:
+        out.append(Check("console capture tests", ("npm", "run", "test:capture"), ADMIN))
     if code:
         out += [Check("console typecheck", ("npm", "run", "typecheck"), ADMIN),
                 Check("console unit tests", ("npm", "run", "test:unit"), ADMIN)]
+    if code or specs or coverage_map in files:
+        out.append(Check("console source coverage", ("node", "scripts/spec-coverage.mjs"), ADMIN))
     if specs or shots or any(_CONSOLE_DEPENDENCIES.match(f) for f in files):
         out.append(Check("console build", ("npm", "run", "build"), ADMIN))
     if specs:
@@ -818,7 +837,7 @@ def _console_checks(files: list, tracked: set) -> list:
 _MODULE = r"(?P<module>app|core/[a-z]+|feature/[a-z]+)"
 _ANDROID_TEST = re.compile(rf"^{ANDROID}/{_MODULE}/src/(?:test|sharedTest)/java/(?P<package>.+)/(?P<name>[^/]+Test)\.kt$")
 _ANDROID_MAIN = re.compile(rf"^{ANDROID}/{_MODULE}/src/main/java/.+/(?P<name>[^/]+)\.kt$")
-_ANDROID_PIXELS = re.compile(rf"^{ANDROID}/{_MODULE}/src/(main|test|sharedTest)/")
+_ANDROID_PIXELS = re.compile(rf"^{ANDROID}/{_MODULE}/src/(?:main/|(?:test|sharedTest)/java/(?:.*/)?screenshots?/)")
 _ANDROID_SHARED = re.compile(rf"^{ANDROID}/(?:build-logic/|gradle/wrapper/|gradle/libs\.versions\.toml$|gradle/dependency-locks/|(?:[^/]+/)*(?:settings|build)\.gradle(?:\.kts)?$|gradle\.properties$|gradle\.lockfile$)")
 
 
@@ -830,6 +849,12 @@ def _android_task(module: str) -> str:
 def _android_checks(files: list, tracked: set) -> list:
     if not any(f.startswith(f"{ANDROID}/") for f in files):
         return []
+    gradle = ("./gradlew", "--console=plain")
+    if any(_ANDROID_PIXELS.match(f) for f in files):
+        tasks = ("testDebugUnitTest",)
+        if any(_ANDROID_SHARED.match(f) or f.startswith(f"{ANDROID}/core/model/") for f in files):
+            tasks += (":core:model:test",)
+        return [Check("android screenshots", (*gradle, *tasks, "-Proborazzi.test.record=true"), ANDROID, slot=True)]
     classes = set()
     for f in files:
         if m := _ANDROID_TEST.match(f):
@@ -838,7 +863,6 @@ def _android_checks(files: list, tracked: set) -> list:
             for t in tracked:
                 if (n := _ANDROID_TEST.match(t)) and n["module"] == m["module"] and n["name"].startswith(m["name"]):
                     classes.add((n["module"], n["package"].replace("/", ".") + "." + n["name"]))
-    gradle = ("./gradlew", "--console=plain")
     if any(_ANDROID_SHARED.match(f) for f in files):
         out = [Check("android tests: shared build inputs", (*gradle, "testDebugUnitTest", ":core:model:test"), ANDROID, slot=True)]
     elif classes:
@@ -849,8 +873,6 @@ def _android_checks(files: list, tracked: set) -> list:
                      (*gradle, *tasks), ANDROID, slot=True)]
     else:
         out = [Check("android compile", (*gradle, ":app:compileDebugKotlin"), ANDROID, slot=True)]
-    if any(_ANDROID_PIXELS.match(f) for f in files):
-        out.append(Check("android screenshots", (*gradle, "testDebugUnitTest", "-Proborazzi.test.record=true"), ANDROID, slot=True))
     return out
 
 
@@ -881,6 +903,8 @@ def proof_plan(files: list, tracked: list, base: str) -> list:
     out += _rust_checks(changed, known)
     out += _console_checks(changed, known)
     out += _android_checks(changed, known)
+    if any(path.startswith("frontend/website/") for path in changed):
+        out.append(Check("site", ("node", "check.mjs"), "frontend/website"))
     fleet_files = {f for f in changed if f.startswith("tools/nzfleet/")}
     if fleet_files and fleet_files <= _PLANNER_FILES:
         out.append(Check("nzfleet tests: proof planner", ("python3", "-m", "unittest", "-q", *_PLANNER_TEST_MODULES),

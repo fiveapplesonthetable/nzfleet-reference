@@ -289,7 +289,8 @@ def _run(batch_id: str, check, areas_of, triage, clock=time.monotonic) -> None:
 
 def _not_run(result: dict) -> bool:
     """merge-check exits 90 and up when it could not fetch, migrate or run at all; that says nothing about the code."""
-    return "process_rc" in result or (result["rc"] >= 90 and result["rc"] != 93) or plan.classify(result["log"]) == "infrastructure"
+    return ("process_rc" in result or (result["rc"] >= 90 and result["rc"] != 93)
+            or (result["rc"] != 0 and plan.classify(result["log"]) == "infrastructure"))
 
 
 def _passed_areas(result: dict, run: str) -> dict:

@@ -108,7 +108,7 @@ In flight now:
 - **CI toward five minutes to deploy and seconds locally** is the current priority. Expect the selection code (`nzfleet/selection/`) to keep changing.
 - **Compromises are tracked in nzela issue #1787**, and several touch nzfleet's checks.
 
-The code was last refreshed from nzela main on 30 Oct (cfff36b57).
+The code was last refreshed from nzela main on 31 Oct (0add29a18).
 
 ## What to build first
 

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import struct
 import zlib
+import io
 from typing import Optional
+
+try:
+    from PIL import Image, ImageChops
+except ImportError:
+    Image = ImageChops = None
 
 SIGNATURE = b"\x89PNG\r\n\x1a\n"
 CHANNELS = {2: 3, 6: 4}
@@ -30,6 +36,15 @@ def decode(data: Optional[bytes]):
         return None
     width, height = header[0], header[1]
     step = CHANNELS[header[3]]
+    if Image is not None:
+        try:
+            with Image.open(io.BytesIO(data), formats=("PNG",)) as image:
+                if image.size == (width, height) and image.mode == ("RGB" if step == 3 else "RGBA"):
+                    unpacked = image.tobytes()
+                    stride = width * step
+                    return width, height, step, [unpacked[start:start + stride] for start in range(0, len(unpacked), stride)]
+        except (OSError, ValueError, Image.DecompressionBombError):
+            pass
     try:
         raw = zlib.decompress(b"".join(idat))
     except zlib.error:
@@ -64,6 +79,16 @@ def _unfilter(kind: int, row: bytearray, up: bytearray, step: int) -> None:
             row[i] = (row[i] + (left, above, corner)[nearest]) & 255
 
 
+def _different(one, two, edge):
+    if Image is not None and ImageChops is not None:
+        mode = "RGB" if one[2] == 3 else "RGBA"
+        first = Image.frombytes(mode, one[:2], b"".join(one[3]))
+        second = Image.frombytes(mode, two[:2], b"".join(two[3]))
+        histogram = ImageChops.difference(first, second).histogram()
+        return sum(sum(histogram[channel * 256 + edge + 1:(channel + 1) * 256]) for channel in range(one[2]))
+    return sum(1 for a, b in zip(one[3], two[3]) if a != b for x, y in zip(a, b) if abs(x - y) > edge)
+
+
 def moved(before: Optional[bytes], after: Optional[bytes], golden: bool = False) -> bool:
     """Whether `after` is a different picture. Golden shots are held exactly; others tolerate antialiasing."""
     if before == after:
@@ -71,13 +96,9 @@ def moved(before: Optional[bytes], after: Optional[bytes], golden: bool = False)
     one, two = decode(before), decode(after)
     if one is None or two is None or one[:3] != two[:3]:
         return True
-    differing = 0
-    for a, b in zip(one[3], two[3]):
-        if a == b:
-            continue
-        if golden:
-            return True
-        differing += sum(1 for x, y in zip(a, b) if abs(x - y) > EDGE)
+    differing = _different(one, two, 0 if golden else EDGE)
+    if golden:
+        return differing != 0
     return differing > SHARE * one[0] * one[1] * one[2]
 
 
@@ -92,5 +113,5 @@ def share_changed(before: Optional[bytes], after: Optional[bytes]) -> Optional[f
     one, two = decode(before), decode(after)
     if one is None or two is None or one[:3] != two[:3]:
         return None
-    differing = sum(1 for a, b in zip(one[3], two[3]) if a != b for x, y in zip(a, b) if x != y)
+    differing = _different(one, two, 0)
     return differing / (one[0] * one[1] * one[2])

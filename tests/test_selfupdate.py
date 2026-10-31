@@ -63,6 +63,26 @@ class Machine(unittest.TestCase):
 
 
 class TheDaemonMovesItsCode(Machine):
+    def test_a_checkout_inside_the_tool_directory_sees_and_runs_the_green_update(self):
+        self.code = os.path.join(self.code, "tools", "nzfleet")
+        new = self.gain(NZFLEET_FILE)
+        self.green_shas.add(new)
+        selfupdate.advance(self.checkout())
+        self.assertEqual((self.head(), self.tested, self.restarts), (new, [new], [1]))
+
+    def test_main_ci_proves_an_imported_update_without_ci_on_the_member_commit(self):
+        old = self.head()
+        sh(self.repo, "git", "checkout", "-q", "-b", "update")
+        self.gain(NZFLEET_FILE)
+        sh(self.repo, "git", "checkout", "-q", "main")
+        sh(self.repo, "git", "reset", "-q", "--hard", old)
+        sh(self.repo, "git", "merge", "-q", "--no-ff", "update", "-m", "The tool update reaches main")
+        merged = sh(self.repo, "git", "rev-parse", "HEAD")
+        sh(self.repo, "git", "update-ref", f"refs/remotes/{world.MAIN}", merged)
+        self.green_shas.add(merged)
+        selfupdate.advance(self.checkout())
+        self.assertEqual((self.head(), self.tested, self.restarts), (merged, [merged], [1]))
+
     def test_a_green_nzfleet_commit_moves_the_code_tests_it_and_restarts(self):
         new = self.gain(NZFLEET_FILE)
         self.green_shas.add(new)

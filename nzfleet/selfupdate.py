@@ -13,7 +13,7 @@ CANDIDATES = 5  # newest nzfleet commits whose ci is looked at in one pass
 
 @dataclass(frozen=True)
 class Behind:
-    """A commit on main that changes tools/nzfleet and is not in the running code."""
+    """A main commit whose tool code is ahead of the running checkout."""
 
     sha: str
     at: float

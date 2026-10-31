@@ -64,7 +64,12 @@ class Checkout:
         return self._git("rev-parse", world.MAIN)
 
     def behind(self) -> tuple:
-        lines = self._git("log", "--format=%H %ct", f"HEAD..{world.MAIN}", "--", "tools/nzfleet").splitlines()
+        lines = self._git("log", "--format=%H %ct", f"HEAD..{world.MAIN}", "--", ":(top)tools/nzfleet").splitlines()
+        if lines:
+            # Path history can omit a merge whose tool tree matches its PR parent; CI proves the merged main tree.
+            main = self._git("show", "-s", "--format=%H %ct", world.MAIN)
+            if main and main not in lines:
+                lines.insert(0, main)
         return tuple(selfupdate.Behind(sha, float(at)) for sha, at in (line.split() for line in lines))
 
     def green(self, sha: str) -> bool:

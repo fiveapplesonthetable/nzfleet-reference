@@ -3,6 +3,8 @@ import struct
 import tempfile
 import unittest
 import zlib
+from unittest import mock
+import importlib.util
 
 from nzfleet import pixels, shots
 
@@ -77,6 +79,36 @@ class Summary(unittest.TestCase):
 
 
 class Pixels(unittest.TestCase):
+    @unittest.skipUnless(importlib.util.find_spec("PIL"), "native image decoder is optional")
+    def test_a_native_decoder_does_not_walk_screenshot_rows_in_python(self):
+        image = png(40, 40, lambda x, y: (x, y, 10, 255))
+        with mock.patch.object(pixels, "_unfilter", side_effect=AssertionError("per-channel Python decoding")):
+            decoded = pixels.decode(image)
+        self.assertEqual(decoded[:3], (40, 40, 4))
+        self.assertEqual(decoded[3][1][:8], bytes((0, 1, 10, 255, 1, 1, 10, 255)))
+
+    def test_native_and_fallback_preserve_alpha_and_threshold_boundaries(self):
+        before = png(50, 10, lambda x, y: (10, 20, 30, 255))
+        cases = [
+            (png(50, 10, lambda x, y: (10, 20, 30, 0) if x == 0 and y == 0 else (10, 20, 30, 255)), False, 1 / 2000),
+            (png(50, 10, lambda x, y: (10, 20, 30, 0) if x < 2 and y == 0 else (10, 20, 30, 255)), True, 2 / 2000),
+            (png(50, 10, lambda x, y: (34, 20, 30, 255) if y == 0 else (10, 20, 30, 255)), False, 50 / 2000),
+            (png(50, 10, lambda x, y: (35, 20, 30, 255) if x < 2 and y == 0 else (10, 20, 30, 255)), True, 2 / 2000),
+        ]
+        for after, changed, share in cases:
+            native = (pixels.decode(after), pixels.moved(before, after), pixels.moved(before, after, True), pixels.share_changed(before, after))
+            with mock.patch.object(pixels, "Image", None):
+                fallback = (pixels.decode(after), pixels.moved(before, after), pixels.moved(before, after, True), pixels.share_changed(before, after))
+            self.assertEqual(native, fallback)
+            self.assertEqual(native[1:], (changed, True, share))
+
+    @unittest.skipUnless(importlib.util.find_spec("PIL"), "native image decoder is optional")
+    def test_an_unavailable_native_decoder_uses_the_existing_decoder(self):
+        image = png(10, 10, lambda x, y: (x, y, 10, 255))
+        expected = pixels.decode(image)
+        with mock.patch.object(pixels.Image, "open", side_effect=OSError("decoder unavailable")):
+            self.assertEqual(pixels.decode(image), expected)
+
     def moved(self, before, after, golden=False):
         return pixels.moved(before, after, golden)
 

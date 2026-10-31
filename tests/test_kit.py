@@ -28,6 +28,65 @@ def find(files, name):
 
 
 class Mapping(unittest.TestCase):
+    def test_a_console_spec_change_checks_the_recorded_source_coverage(self):
+        self.assertIn("console source coverage", names(["frontend/admin/e2e/walk.spec.ts"]))
+
+    def test_a_generated_source_coverage_map_does_not_select_every_browser_spec(self):
+        checks = plan.proof_plan(["frontend/admin/e2e/source-coverage.json"], TRACKED, "BASE")
+        self.assertEqual([c.name for c in checks], ["whitespace", "secrets", "console source coverage"])
+    def test_a_screenshot_runner_test_selects_its_console_test_without_full_presubmit(self):
+        checks = plan.proof_plan(["frontend/admin/scripts/tests/shot-run.test.mjs"], TRACKED, "BASE")
+        self.assertEqual([c.name for c in checks], ["whitespace", "secrets", "console script tests"])
+        self.assertEqual(checks[-1].cmd, ("node", "--test", "scripts/tests/shot-run.test.mjs"))
+
+    def test_an_unmapped_console_script_stays_inside_the_complete_console_checks(self):
+        checks = plan.proof_plan(["frontend/admin/scripts/shot-run.mjs"], TRACKED, "BASE")
+        self.assertNotIn("conservative checks", [c.name for c in checks])
+        self.assertIn("console screenshots", [c.name for c in checks])
+        self.assertTrue(any(c.name.startswith("console specs:") for c in checks))
+        self.assertFalse(any(c.cmd[0] in ("cargo", "./gradlew") for c in checks))
+    def test_android_recording_does_not_rerun_the_same_unit_task_with_a_different_filter(self):
+        checks = plan.proof_plan(["frontend/android/app/src/main/java/app/nzela/ui/SendScreen.kt"], TRACKED, "BASE")
+        gradle = [c for c in checks if c.slot]
+        self.assertEqual(len(gradle), 1)
+        self.assertIn("testDebugUnitTest", gradle[0].cmd)
+        self.assertIn("-Proborazzi.test.record=true", gradle[0].cmd)
+
+    def test_recording_keeps_the_pure_model_suite_when_shared_build_inputs_change(self):
+        checks = plan.proof_plan(["frontend/android/gradle.properties", "frontend/android/app/src/main/res/values/strings.xml"], TRACKED, "BASE")
+        gradle = [c for c in checks if c.slot]
+        self.assertEqual(len(gradle), 1)
+        self.assertIn(":core:model:test", gradle[0].cmd)
+    def test_a_website_edit_runs_its_route_and_form_checks_without_other_frontends(self):
+        checks = plan.proof_plan(["frontend/website/site.js"], TRACKED, "BASE")
+        self.assertEqual([check.name for check in checks], ["whitespace", "secrets", "site"])
+        self.assertEqual(checks[-1].cmd, ("node", "check.mjs"))
+        self.assertEqual(checks[-1].cwd, "frontend/website")
+
+    def test_query_metadata_keeps_the_proof_of_the_crate_whose_queries_changed(self):
+        files = [".sqlx/query-abcd.json", "crates/nzela-core/src/money.rs"]
+        checks = plan.proof_plan(files, TRACKED, "BASE")
+        self.assertNotIn("conservative checks", [check.name for check in checks])
+        self.assertEqual([check.cmd for check in checks if check.name.startswith("rust tests")],
+                         [("cargo", "+1.98", "test", "--locked", "-p", "nzela-core", "--lib", "--", "money::")])
+
+    def test_query_metadata_without_a_query_source_change_checks_the_workspace(self):
+        checks = plan.proof_plan([".sqlx/query-abcd.json"], TRACKED, "BASE")
+        self.assertNotIn("conservative checks", [check.name for check in checks])
+        self.assertIn(("cargo", "+1.98", "clippy", "--locked", "--workspace", "--all-targets"), [check.cmd for check in checks])
+
+    def test_a_capture_engine_change_runs_capture_checks_without_other_product_suites(self):
+        files = ["frontend/admin/scripts/capture.mjs"]
+        checks = plan.proof_plan(files, TRACKED + files, "BASE")
+        self.assertEqual([check.name for check in checks],
+                         ["whitespace", "secrets", "console capture tests", "console build", "console screenshots"])
+
+    def test_a_capture_regression_test_does_not_redraw_the_catalogue(self):
+        files = ["frontend/admin/scripts/tests/capture-browser.test.mjs"]
+        checks = plan.proof_plan(files, TRACKED + files, "BASE")
+        self.assertEqual([check.name for check in checks], ["whitespace", "secrets", "console capture tests"])
+        self.assertEqual(checks[-1].cmd, ("npm", "run", "test:capture"))
+
     def test_a_documentation_change_still_runs_the_secret_scan(self):
         self.assertEqual(names(["docs/ci-runners.md"]), ["whitespace", "secrets"])
 
@@ -115,7 +174,7 @@ class Mapping(unittest.TestCase):
 
     def test_a_console_source_change_is_typechecked_unit_tested_and_drawn_again(self):
         self.assertEqual(names(["frontend/admin/src/App.tsx"]),
-                         ["whitespace", "secrets", "console typecheck", "console unit tests", "console build", "console screenshots"])
+                         ["whitespace", "secrets", "console typecheck", "console unit tests", "console source coverage", "console build", "console screenshots"])
 
     def test_a_console_lockfile_change_also_builds_the_locked_dependencies(self):
         self.assertIn("console build", names(["frontend/admin/package-lock.json"]))
@@ -144,9 +203,16 @@ class Mapping(unittest.TestCase):
         self.assertEqual(check.cmd[-3:], (":app:testDebugUnitTest", "--tests", "app.nzela.ui.SendScreenTest"))
         self.assertTrue(check.slot)
 
-    def test_a_changed_android_source_finds_the_test_beside_its_name(self):
-        check = find(["frontend/android/app/src/main/java/app/nzela/ui/SendScreen.kt"], "android tests")
-        self.assertEqual(check.cmd[-1], "app.nzela.ui.SendScreenTest")
+    def test_the_recording_suite_covers_a_changed_android_source_without_a_second_unit_run(self):
+        check = find(["frontend/android/app/src/main/java/app/nzela/ui/SendScreen.kt"], "android screenshots")
+        self.assertIn("testDebugUnitTest", check.cmd)
+        self.assertNotIn("--tests", check.cmd)
+
+    def test_an_android_flow_test_edit_does_not_record_screenshots(self):
+        self.assertNotIn("android screenshots", names(["frontend/android/app/src/test/java/app/nzela/flow/HomeFlowTest.kt"]))
+
+    def test_an_android_capture_catalogue_edit_still_records_screenshots(self):
+        self.assertIn("android screenshots", names(["frontend/android/app/src/test/java/app/nzela/screenshot/catalogue/TabStates.kt"]))
 
     def test_android_pixels_are_recorded_again_when_a_screen_changes(self):
         self.assertIn("android screenshots", names(["frontend/android/app/src/main/java/app/nzela/ui/SendScreen.kt"]))
@@ -201,6 +267,72 @@ class Errors(unittest.TestCase):
 
 class Proof(unittest.TestCase):
     ok = {"ok": True, "tree": "T", "checks": []}
+
+    def test_worker_capture_uses_the_current_visual_plans_renderer_names(self):
+        observed = {"version": 1, "base": "base", "head": "WORKTREE:head:digest",
+                    "full_fallback": {"console": False, "android": False},
+                    "renderer": {"console": ["03-home"]}, "selected": {"android": ["home", "home_NIGHT"]}}
+        self.assertEqual(prove.capture_filter(observed, "console", "base", "head"), "03-home")
+        self.assertEqual(prove.capture_filter(observed, "android", "base", "head"), "home,home_NIGHT")
+
+    def test_worker_capture_does_not_accept_a_stale_or_incomplete_visual_plan(self):
+        valid = {"version": 1, "base": "base", "head": "WORKTREE:head:digest",
+                 "full_fallback": {"android": False}, "selected": {"android": ["home"]}}
+        for changed in ({"version": 2}, {"base": "old"}, {"head": "WORKTREE:old:digest"},
+                        {"full_fallback": {"android": True}}, {"selected": {"android": []}},
+                        {"selected": {"android": [None]}}):
+            with self.subTest(changed=changed):
+                self.assertEqual(prove.capture_filter({**valid, **changed}, "android", "base", "head"), "")
+
+    def test_a_missing_visual_planner_keeps_the_complete_capture(self):
+        self.assertEqual(prove.capture_selection("/no-such-project", "base", "android"), "")
+
+    def test_malformed_visual_plan_objects_keep_the_complete_capture(self):
+        valid = {"version": 1, "base": "base", "head": "WORKTREE:head:digest",
+                 "full_fallback": {"android": False}, "selected": {"android": ["home"]}}
+        for observed in (None, [], {**valid, "full_fallback": None}, {**valid, "selected": None}):
+            with self.subTest(observed=observed):
+                self.assertEqual(prove.capture_filter(observed, "android", "base", "head"), "")
+
+    def test_shunt_keeps_shared_builds_in_order_without_recording_inherited_credentials(self):
+        checks = [Check("rust", ("cargo", "+1.98", "test")),
+                  Check("console", ("npm", "test"), "frontend/admin"),
+                  Check("android", ("./gradlew", "test"), "frontend/android", slot=True)]
+        result = prove.shunt_plan(checks, "/tree with spaces", {"DATABASE_URL": "private-value"}, {}, "base", "/proof")
+        self.assertEqual([r["area"] for r in result], ["rust", "console", "android"])
+        self.assertNotIn("private-value", str(result))
+        self.assertIn("'/tree with spaces/frontend/admin'", result[1]["cmd"])
+        self.assertIn("NZELA_BASE=base", result[0]["cmd"])
+
+    def test_shunt_starts_preview_inside_the_console_lane_before_browser_checks(self):
+        checks = [Check("build", ("npm", "run", "build"), "frontend/admin"),
+                  Check("browser", ("npm", "run", "e2e"), "frontend/admin", needs="preview")]
+        result = prove.shunt_plan(checks, "/tree", {}, {}, "base", "/proof")
+        self.assertEqual([r["area"] for r in result], ["console", "console"])
+        self.assertNotIn("_preview", result[0]["cmd"])
+        self.assertLess(result[1]["cmd"].index("_preview"), result[1]["cmd"].index("npm run e2e"))
+
+    def test_a_shunt_result_must_cover_every_requested_command(self):
+        expected = [{"name": "first", "cmd": "one"}, {"name": "second", "cmd": "two"}]
+        for actual in ([], expected[:1], list(reversed(expected)),
+                       [expected[0], {"name": "second", "cmd": "different"}]):
+            with self.subTest(actual=actual), self.assertRaisesRegex(ValueError, "complete requested"):
+                prove.shunt_results({"checks": actual}, expected, [], "/tree", "/proof")
+
+    def test_a_shunt_result_preserves_the_full_log_and_actual_duration(self):
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(root + "/.tachoproof/logs")
+            os.makedirs(root + "/.nzproof")
+            with open(root + "/.tachoproof/logs/000.log", "w") as f:
+                f.write("actual output\n")
+            checks = [Check("unit", ("npm", "test"))]
+            expected = [{"name": "unit", "cmd": "npm test"}]
+            summary = {"checks": [{**expected[0], "ok": True, "duration_ms": 1234}]}
+            result = prove.shunt_results(summary, expected, checks, root, root + "/.nzproof")
+            self.assertEqual(result[0]["seconds"], 1)
+            self.assertEqual(result[0]["cmd"], ["npm", "test"])
+            with open(result[0]["log"]) as f:
+                self.assertEqual(f.read(), "actual output\n")
 
     def test_no_proof_is_refused(self):
         self.assertIn("nzfleet prove", plan.proof_problems(None, "T", False)[0])
