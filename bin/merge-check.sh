@@ -102,14 +102,20 @@ cd "$wt" || exit 0
 # Two PRs that each redrew the screenshots conflict there and nowhere else. The
 # check does not compare screenshots byte for byte, so the train's copy stands in;
 # the batch's refresh step draws them again on the merged tree.
-generated='^frontend/admin/(screenshots/|docs/comparison\.html$)|^frontend/android/docs/screenshots/'
+generated='^frontend/admin/(screenshots/|docs/comparison\.html$|e2e/source-coverage\.json$)|^frontend/android/docs/screenshots/'
 settle_generated() {
     local files
     files=$(git diff --name-only --diff-filter=U)
     [ -n "$files" ] || return 1
     printf '%s\n' "$files" | grep -qvE "$generated" && return 1
     while IFS= read -r f; do
-        if git cat-file -e "HEAD:$f" 2>/dev/null; then
+        if [ "$f" = frontend/admin/e2e/source-coverage.json ]; then
+            if git cat-file -e "upstream/main:$f" 2>/dev/null; then
+                git checkout upstream/main -- "$f" && git add -- "$f"
+            else
+                git rm -q -- "$f"
+            fi
+        elif git cat-file -e "HEAD:$f" 2>/dev/null; then
             git checkout --ours -- "$f" && git add -- "$f"
         else
             git rm -q -- "$f"

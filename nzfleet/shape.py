@@ -23,7 +23,7 @@ def _git(wt: str, *args) -> subprocess.CompletedProcess:
 
 def _apply(wt: str, commit: str):
     """Cherry-picks one commit. Returns the files it conflicted on when any is written by hand; a conflict
-    in generated files alone takes the base's copy, because the batch draws them again."""
+    in generated files alone takes the base's copy, until the owning job refreshes them."""
     if _git(wt, "cherry-pick", "--allow-empty", commit).returncode == 0:
         return []
     files = world.git("diff", "--name-only", "--diff-filter=U", cwd=wt).split()

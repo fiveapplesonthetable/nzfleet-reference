@@ -56,6 +56,11 @@ def _merge(tree: str, n: int, sha: str, generators: dict, into: Assembly) -> Non
         _must(tree, "merge", "--abort")
         into.left_out.append((n, list(settlement.by_hand)))
         return
+    for path in settlement.keep_main:
+        if _git(tree, "cat-file", "-e", f"{world.MAIN}:{path}").returncode == 0:
+            _must(tree, "checkout", world.MAIN, "--", path)
+        else:
+            _must(tree, "rm", "-q", "--", path)
     for path in settlement.take:
         _take_theirs(tree, path)
     _must(tree, "commit", "-q", "--no-edit")

@@ -1,4 +1,6 @@
+import json
 import os
+from pathlib import Path
 import struct
 import tempfile
 import unittest
@@ -27,6 +29,17 @@ def png(width, height, pixel):
 
 
 class Scope(unittest.TestCase):
+    def test_shunt_config_keeps_the_current_screenshot_owners(self):
+        path = Path(__file__).resolve().parents[1] / "shunt/tacho-shots.json"
+        rules = json.loads(path.read_text())
+        self.assertEqual(dict(rules["area_roots"]), {"console": shots.CONSOLE, "android": shots.ANDROID})
+        self.assertEqual(dict(rules["shot_dirs"]), shots.SHOT_DIRS)
+        self.assertEqual(tuple(rules["generated_prefixes"]), shots.GENERATED)
+        self.assertEqual(rules["aliases"], shots.ALIASES)
+        self.assertEqual(set(rules["shared_compose"]), shots.SHARED_COMPOSE)
+        self.assertEqual(rules["screenshot_tests_marker"], shots.SCREENSHOT_TESTS)
+        self.assertEqual(rules["screen_dirs"], {"console": shots.CONSOLE + "src/screens"})
+
     def stray(self, *files):
         return shots.stray(list(files), GOLDEN)
 

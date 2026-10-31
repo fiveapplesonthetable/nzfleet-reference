@@ -13,6 +13,7 @@ from .selection import areas, since
 SHOT = "shots"
 GENERATED = "generated"
 SOURCE = "source"
+SPEC_COVERAGE = "frontend/admin/e2e/source-coverage.json"
 
 
 @dataclass(frozen=True)
@@ -86,20 +87,23 @@ class Settlement:
     take: tuple
     regenerate: tuple
     by_hand: tuple
+    keep_main: tuple = ()
 
 
 def settle(conflicted: list, generators: dict) -> Settlement:
     """Screenshots and files a generator writes are resolved; any other conflicted file needs a person."""
-    take, regenerate, by_hand = [], [], []
+    take, regenerate, by_hand, keep_main = [], [], [], []
     for path in conflicted:
-        if path in generators:
+        if path == SPEC_COVERAGE:
+            keep_main.append(path)
+        elif path in generators:
             take.append(path)
             regenerate.append(path)
         elif path.endswith(".png") and plan.generated_areas([path]) is not None:
             take.append(path)
         else:
             by_hand.append(path)
-    return Settlement(tuple(take), tuple(regenerate), tuple(by_hand))
+    return Settlement(tuple(take), tuple(regenerate), tuple(by_hand), tuple(keep_main))
 
 
 def redraw_areas(files: list) -> list:
@@ -161,6 +165,8 @@ def resolution_lines(n: int, settlement: Settlement) -> list:
     shots = [p for p in settlement.take if p not in settlement.regenerate]
     if shots:
         rows.append((n, f"{len(shots)} screenshot(s) conflicted; the later copy was kept for the batch to refresh"))
+    for path in settlement.keep_main:
+        rows.append((n, f"{path} conflicted; main’s copy was kept for the nightly refresh"))
     for path in settlement.regenerate:
         rows.append((n, f"{path} conflicted; the later copy was kept and its generator ran on the merged tree"))
     return rows

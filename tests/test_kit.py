@@ -133,6 +133,38 @@ class Mapping(unittest.TestCase):
         check = find(files, "nzfleet tests")
         self.assertEqual(check.cmd, ("python3", "-m", "unittest", "-q", "tests.test_plan", "tests.test_kit", "tests.test_shells"))
 
+    def test_owned_check_runners_do_not_trigger_unrelated_product_suites(self):
+        for area in ("android", "console"):
+            path = f"scripts/areas/{area}.sh"
+            checks = plan.proof_plan([path], TRACKED + [path], "BASE")
+            commands = [check.cmd for check in checks]
+            self.assertNotIn(("scripts/checks.sh", "all"), commands)
+            self.assertIn(("scripts/checks.sh", area), commands)
+
+    def test_workflows_and_android_inventory_keep_their_domain_proofs(self):
+        files = [".github/workflows/console-spec-map.yaml", ".github/workflows/perf.yaml",
+                 "scripts/android-catalogue.py", "scripts/android-catalogue-test.py",
+                 "frontend/admin/README.md"]
+        checks = plan.proof_plan(files, TRACKED + files, "BASE")
+        commands = [check.cmd for check in checks]
+        self.assertNotIn(("scripts/checks.sh", "all"), commands)
+        self.assertIn(("python3", "scripts/android-catalogue-test.py"), commands)
+        self.assertIn(("python3", "scripts/android-catalogue.py", "frontend/android/docs/screenshots"), commands)
+        self.assertIn(("tools/nzfleet/runner/runner-trust-test.sh",), commands)
+        self.assertIn(("tools/nzfleet/deploycheck/workflow-shells-test.sh",), commands)
+        self.assertFalse(any(check.cmd[0] in ("cargo", "./gradlew") for check in checks))
+
+    def test_owned_frontend_runners_use_independent_shunt_resource_lanes(self):
+        from nzfleet.prove import shunt_plan
+
+        files = ["scripts/areas/android.sh", "scripts/areas/console.sh"]
+        checks = plan.proof_plan(files, TRACKED + files, "BASE")
+        projected = shunt_plan(checks, "/checkout", {}, {}, "BASE", "/proof")
+        areas = {check["name"]: check["area"] for check in projected}
+        self.assertEqual(areas["android check runner"], "android")
+        self.assertEqual(areas["console check runner"], "console")
+        self.assertTrue(find(files, "android check runner").slot)
+
     def test_a_shared_check_script_falls_back_to_all_checks(self):
         check = find(["scripts/checks.sh"], "conservative checks")
         self.assertEqual(check.cmd, ("scripts/checks.sh", "all"))

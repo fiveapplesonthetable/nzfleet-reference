@@ -283,10 +283,12 @@ def issue(title: str):
 def set_issue(title: str, body: str) -> int:
     found = issue(title)
     if found is None:
-        url = gh("issue", "create", "-R", UPSTREAM, "--title", title, "--body", body).strip()
-        return int(url.rsplit("/", 1)[1])
+        response = gh("api", "-X", "POST", f"repos/{UPSTREAM}/issues", "--input", "-",
+                      input=json.dumps({"title": title, "body": body}))
+        return int(json.loads(response)["number"])
     if found["body"] != body:
-        gh("issue", "edit", str(found["number"]), "-R", UPSTREAM, "--body", body)
+        gh("api", "-X", "PATCH", f"repos/{UPSTREAM}/issues/{found['number']}", "--input", "-",
+           input=json.dumps({"body": body}))
     return found["number"]
 
 

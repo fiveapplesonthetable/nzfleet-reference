@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -17,7 +18,7 @@ def source_extensions() -> tuple[str, ...]:
 _FLEET_MODULE = re.compile(r"^tools/nzfleet/nzfleet/([A-Za-z0-9_]+)(?:\.py|/.+\.py)$")
 _FLEET_TEST = re.compile(r"^tools/nzfleet/tests/(test_[A-Za-z0-9_]+)\.py$")
 _IMPORT_LINE = re.compile(r"^\s*(?:from|import)\s.*$", re.M)
-_CONSOLE_IMPORT = re.compile(r"(?:from\s*|import\s+)['\"]([.@][^'\"]+)['\"]")
+_CONSOLE_IMPORT = re.compile(r"""(?<![\w'"])(?:from\s*|import\s*)['"]([^'"\r\n]+)['"]""")
 
 
 def fleet(paths: list, tests: dict, modules: dict | None = None) -> list:
@@ -81,7 +82,28 @@ def console(paths: list, modules: dict, tests: set) -> list:
     return [path.removeprefix(plan.ADMIN) for path in chosen.get("tests", [])]
 
 
-def console_specs(paths: list, modules: dict, coverage: dict | None = None) -> list:
+def _spec_hash(spec: str, modules: dict) -> str:
+    from ..devloop import plan
+
+    files = {name: modules[name] for name in sorted({spec} | plan.closure(spec, modules))}
+    return hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
+
+
+def coverage_key(modules: dict) -> dict:
+    """Hash each spec and its transitive fixtures with the selector's import closure."""
+    from ..devloop import plan
+
+    specs = sorted(p for p in modules if p.startswith(plan.ADMIN + "e2e/") and p.endswith(".spec.ts")
+                   and not p.endswith(("api.spec.ts", "crawl.spec.ts", "long-tasks.spec.ts")))
+    return {
+        "specs": {p.removeprefix(plan.ADMIN + "e2e/"): _spec_hash(p, modules) for p in specs},
+        "dynamicFiles": {p.removeprefix(plan.ADMIN): hashlib.sha256(text.encode()).hexdigest()
+                         for p, text in sorted(modules.items()) if p.startswith(plan.ADMIN + "src/")
+                         and re.search(r"\bimport\s*\(", text)},
+    }
+
+
+def console_specs(paths: list, modules: dict, coverage: dict | None = None, resolved_imports: frozenset = frozenset()) -> list:
     """The browser specs reached by a changed source, or every spec when coverage cannot prove the selection."""
     from ..devloop import plan
 
@@ -104,9 +126,13 @@ def console_specs(paths: list, modules: dict, coverage: dict | None = None) -> l
     importers = {}
     extensions = source_extensions()
     for importer, text in modules.items():
-        if not importer.startswith(plan.ADMIN + "src/"):
+        if not importer.startswith(plan.ADMIN + "src/") or not importer.endswith(extensions):
             continue
         for named in _CONSOLE_IMPORT.findall(text):
+            if not named.startswith((".", "@/")):
+                if named not in resolved_imports:
+                    return [spec.removeprefix(plan.ADMIN) for spec in specs]
+                continue
             base = plan.ADMIN + "src/" + named[2:] if named.startswith("@/") else importer.rsplit("/", 1)[0] + "/" + named
             joined = plan.normalise(base)
             for candidate in (joined, *(joined + ext for ext in extensions),
@@ -114,6 +140,8 @@ def console_specs(paths: list, modules: dict, coverage: dict | None = None) -> l
                 if candidate in modules:
                     importers.setdefault(candidate, set()).add(importer)
                     break
+            else:
+                return [spec.removeprefix(plan.ADMIN) for spec in specs]
     reaching = set(changed)
     pending = list(changed)
     while pending:

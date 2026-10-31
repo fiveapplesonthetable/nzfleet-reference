@@ -148,8 +148,9 @@ def shunt_plan(checks: list, wt: str, inherited: dict, rust_cache: dict, base: s
             preview = shlex.join(["env", f"PYTHONPATH={package}", "python3", "-c",
                                   f"from nzfleet.prove import _preview; _preview({wt!r}, print)"])
             command = preview + " && " + command
-        area = ("android" if check.cwd == "frontend/android" else
-                "console" if check.cwd == "frontend/admin" else
+        runner_area = check.cmd[1] if check.cmd[:1] == ("scripts/checks.sh",) and len(check.cmd) == 2 else ""
+        area = ("android" if check.cwd == "frontend/android" or runner_area == "android" else
+                "console" if check.cwd == "frontend/admin" or runner_area == "console" else
                 "rust" if check.cmd[0] == "cargo" else "project")
         result.append({"name": check.name, "cmd": command, "area": area, "units": []})
     return result

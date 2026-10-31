@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 
 from . import areas, changed_tests, files, last_green, nightly, proof, related, since
@@ -89,6 +89,33 @@ def _read(path: str) -> str:
         return handle.read()
 
 
+def _console_modules() -> dict:
+    extensions = related.source_extensions()
+    return {**_read_tree("frontend/admin/e2e", extensions + (".json",)),
+            **_read_tree("frontend/admin/fixtures", extensions + (".json",)),
+            **_read_tree("frontend/admin/src", extensions + (".css", ".json", ".svg"))}
+
+
+def _resolved_console_imports(modules: dict) -> frozenset:
+    names = sorted({name for path, text in modules.items() if path.startswith("frontend/admin/src/")
+                    for name in related._CONSOLE_IMPORT.findall(text) if not name.startswith((".", "@/"))})
+    try:
+        result = subprocess.run(["node", "--input-type=module", "-e",
+                                 "let input=''; for await (const chunk of process.stdin) input+=chunk; "
+                                 "console.log(JSON.stringify(JSON.parse(input).filter(name => { "
+                                 "try { import.meta.resolve(name); return true } catch { return false } })))"],
+                                input=json.dumps(names), capture_output=True, text=True,
+                                cwd="frontend/admin", check=True)
+        return frozenset(json.loads(result.stdout))
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return frozenset()
+
+
+def _coverage_key(args) -> int:
+    print(json.dumps(related.coverage_key(_console_modules())))
+    return 0
+
+
 def _related(args) -> int:
     paths = _paths()
     if args.area == "fleet":
@@ -96,23 +123,14 @@ def _related(args) -> int:
     elif args.area == "deploy":
         chosen = related.deploy(paths, _deploy_checks("scripts/areas/deploy.sh"))
     elif args.area == "console-specs":
-        extensions = related.source_extensions()
-        modules = {**_read_tree("frontend/admin/e2e", (".ts", ".tsx")), **_read_tree("frontend/admin/fixtures", extensions),
-                   **_read_tree("frontend/admin/src", extensions)}
+        modules = _console_modules()
         try:
             saved = json.loads(_read("frontend/admin/e2e/source-coverage.json"))
-            names = sorted(path.removeprefix("frontend/admin/e2e/") for path in modules
-                           if path.endswith(".spec.ts") and not path.endswith(("api.spec.ts", "crawl.spec.ts", "long-tasks.spec.ts")))
-            hashes = {name: hashlib.sha256(_read("frontend/admin/e2e/" + name).encode()).hexdigest()
-                      for name in names}
-            dynamic = {path.removeprefix("frontend/admin/"):
-                       hashlib.sha256(text.encode()).hexdigest()
-                       for path, text in modules.items() if path.startswith("frontend/admin/src/")
-                       and re.search(r"\bimport\s*\(", text)}
-            coverage = saved["sources"] if saved["specs"] == hashes and saved["dynamicFiles"] == dynamic else None
+            key = related.coverage_key(modules)
+            coverage = saved["sources"] if all(saved[k] == v for k, v in key.items()) else None
         except (OSError, ValueError, KeyError, TypeError):
             coverage = None
-        chosen = related.console_specs(paths, modules, coverage)
+        chosen = related.console_specs(paths, modules, coverage, _resolved_console_imports(modules))
     else:
         modules = _read_tree("frontend/admin/src", (".ts", ".tsx", ".mjs"))
         modules.update(_read_tree("frontend/admin/tests", (".ts", ".tsx", ".mjs")))
@@ -191,6 +209,7 @@ def parser() -> argparse.ArgumentParser:
     x = sub.add_parser("related", help="unit tests related to the paths on stdin, run from the repository root")
     x.add_argument("area", choices=("fleet", "console", "console-specs", "deploy"))
     x.set_defaults(run=_related)
+    sub.add_parser("console-coverage-key").set_defaults(run=_coverage_key)
     g = sub.add_parser("last-green", help="newest green ancestor from the runs API response on stdin")
     g.add_argument("head", nargs="?", default="HEAD")
     g.set_defaults(run=_last_green)

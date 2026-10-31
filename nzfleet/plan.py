@@ -173,15 +173,15 @@ def next_probe(b: Bisect):
     return ("probe", (lo + hi) // 2)
 
 
-# Files a command draws from the code, by the area whose command draws them. A conflict in these
-# alone is settled by drawing them again, not by a person.
+# Stale generated output is safe to keep: screenshots redraw in the batch and coverage falls back to every spec.
 GENERATED = {
-    "console": re.compile(r"^crates/nzela-wire/|^frontend/admin/(screenshots/|docs/comparison\.html$)"),
+    "console": re.compile(r"^crates/nzela-wire/|^frontend/admin/(screenshots/|docs/comparison\.html$|e2e/source-coverage\.json$)"),
     "android": re.compile(r"^frontend/android/docs/screenshots/"),
 }
 
 
 GENERATED_PATHSPECS = [":(exclude)frontend/admin/screenshots", ":(exclude)frontend/admin/docs/comparison.html",
+                       ":(exclude)frontend/admin/e2e/source-coverage.json",
                        ":(exclude)frontend/android/docs/screenshots"]
 
 
@@ -722,9 +722,24 @@ _PLANNER_FILES = {"tools/nzfleet/nzfleet/plan.py"} | {
 } | {"tools/nzfleet/nzfleet/openpr.py", "tools/nzfleet/nzfleet/shots.py", "tools/nzfleet/nzfleet/refresh.py"}
 _WORKFLOW_SHELL_FILES = {path for path in _DEPLOY_PROOFS if path.startswith("tools/nzfleet/deploycheck/workflow-shells")}
 _FUZZ_NIGHTLY_FILES = {".github/workflows/fuzz.yaml", "fuzz/money-paths.sh", "fuzz/nightly-test.sh"}
+_OWNED_CHECK_RUNNERS = {"scripts/areas/android.sh": "android", "scripts/areas/console.sh": "console"}
+_ANDROID_INVENTORY_FILES = {"scripts/android-catalogue.py", "scripts/android-catalogue-test.py"}
+_WORKFLOW_POLICY_FILES = {".github/workflows/console-spec-map.yaml", ".github/workflows/perf.yaml"}
+_WORKFLOW_POLICY_CHECKS = (
+    ("tools/nzfleet/runner/runner-trust-test.sh",),
+    ("tools/nzfleet/deploycheck/workflow-repository-test.sh",),
+    ("tools/nzfleet/deploycheck/workflow-concurrency-test.sh",),
+    ("python3", "tools/nzfleet/deploycheck/workflow-pre-checkout-dirs.py"),
+    ("tools/nzfleet/deploycheck/workflow-shells-test.sh",),
+    ("tools/nzfleet/deploycheck/workflow-shells-diagnostics-test.sh",),
+)
 
 
 def _known_change(path: str, tracked: set) -> bool:
+    if path in _OWNED_CHECK_RUNNERS or path in _ANDROID_INVENTORY_FILES or path in _WORKFLOW_POLICY_FILES:
+        return True
+    if path == f"{ADMIN}/README.md":
+        return True
     if path in _DEPLOY_PROOFS:
         return True
     if path in _FUZZ_NIGHTLY_FILES:
@@ -891,6 +906,14 @@ def proof_plan(files: list, tracked: list, base: str) -> list:
         out.append(Check("conservative checks", ("scripts/checks.sh", "all"), needs="db"))
         return out
     out.append(Check("secrets", ("scripts/checks.sh", "secrets")))
+    runners = {_OWNED_CHECK_RUNNERS[path] for path in changed if path in _OWNED_CHECK_RUNNERS}
+    if set(changed) & _WORKFLOW_POLICY_FILES:
+        out += [Check("workflow contract: " + command[-1], command) for command in _WORKFLOW_POLICY_CHECKS]
+    if set(changed) & _ANDROID_INVENTORY_FILES:
+        out += [Check("android inventory properties", ("python3", "scripts/android-catalogue-test.py")),
+                Check("android inventory", ("python3", "scripts/android-catalogue.py", f"{ANDROID}/docs/screenshots"))]
+    out += [Check(f"{area} check runner", ("scripts/checks.sh", area), slot=area == "android")
+            for area in sorted(runners)]
     if set(changed) & _FUZZ_NIGHTLY_FILES:
         out.append(Check("fuzz nightly harness", ("bash", "fuzz/nightly-test.sh")))
     if "scripts/areas/deploy.sh" in changed:
@@ -901,8 +924,10 @@ def proof_plan(files: list, tracked: list, base: str) -> list:
             deploy_files |= _WORKFLOW_SHELL_FILES
         out += [Check(f"deploy: {path}", _DEPLOY_PROOFS[path]) for path in sorted(deploy_files)]
     out += _rust_checks(changed, known)
-    out += _console_checks(changed, known)
-    out += _android_checks(changed, known)
+    console = _console_checks(changed, known)
+    out += [check for check in console if "console" not in runners or check.name == "console script tests"]
+    if "android" not in runners:
+        out += _android_checks(changed, known)
     if any(path.startswith("frontend/website/") for path in changed):
         out.append(Check("site", ("node", "check.mjs"), "frontend/website"))
     fleet_files = {f for f in changed if f.startswith("tools/nzfleet/")}

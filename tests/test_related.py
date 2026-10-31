@@ -99,6 +99,34 @@ class AConsoleSourceChangeRunsTheBrowserSpecsThatExecuteIt(unittest.TestCase):
     }
     coverage = {"home.spec.ts": ["src/pages/Home.tsx"], "senders.spec.ts": ["src/pages/Senders.tsx"]}
 
+    def test_a_transitive_fixture_change_invalidates_the_recording(self):
+        modules = {**self.modules,
+                   "frontend/admin/e2e/home.spec.ts": "import './helper'",
+                   "frontend/admin/e2e/helper.ts": "import '../fixtures/home.json'",
+                   "frontend/admin/fixtures/home.json": '{"route":"/home"}'}
+        before = related.coverage_key(modules)
+        modules["frontend/admin/fixtures/home.json"] = '{"route":"/senders"}'
+        after = related.coverage_key(modules)
+        self.assertNotEqual(before["specs"]["home.spec.ts"], after["specs"]["home.spec.ts"])
+        self.assertEqual(before["specs"]["senders.spec.ts"], after["specs"]["senders.spec.ts"])
+
+    def test_a_field_named_from_does_not_become_an_import(self):
+        modules = {**self.modules, "frontend/admin/src/pages/Home.tsx": "params.get('from'); params.get('to')"}
+        self.assertEqual(related.console_specs(["frontend/admin/src/pages/Home.tsx"], modules, self.coverage),
+                         ["e2e/home.spec.ts"])
+
+    def test_an_unresolved_import_selects_every_spec(self):
+        for named in ("missing-package", "./Missing", "unknown-alias/Screen", "Unknown"):
+            modules = {**self.modules, "frontend/admin/src/pages/Unknown.ts": "export const unknown = 1",
+                       "frontend/admin/src/pages/Home.tsx": f"import'{named}'"}
+            self.assertEqual(related.console_specs(["frontend/admin/src/pages/Home.tsx"], modules, self.coverage),
+                             ["e2e/home.spec.ts", "e2e/senders.spec.ts"])
+
+    def test_a_resolved_external_dependency_is_a_leaf(self):
+        modules = {**self.modules, "frontend/admin/src/pages/Home.tsx": "import { useState } from 'react'"}
+        self.assertEqual(related.console_specs(["frontend/admin/src/pages/Home.tsx"], modules, self.coverage, frozenset({"react"})),
+                         ["e2e/home.spec.ts"])
+
     def test_a_mapped_page_selects_only_its_spec(self):
         self.assertEqual(related.console_specs(["frontend/admin/src/pages/Home.tsx"], self.modules, self.coverage),
                          ["e2e/home.spec.ts"])

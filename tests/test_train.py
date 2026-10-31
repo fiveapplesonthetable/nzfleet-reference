@@ -206,6 +206,17 @@ class Train(TrainWorld):
             tick.shape([edited, train_head], {}, False)
         popen.assert_called_once()
 
+    def test_a_conflicting_spec_map_keeps_mains_copy(self):
+        w = self.world
+        coverage = "frontend/admin/e2e/source-coverage.json"
+        w.write(coverage, "main\n")
+        w.commit("a recorded spec map")
+        w.publish_main()
+        w.open_pr(1, {coverage: "one\n"})
+        w.open_pr(2, {coverage: "two\n"})
+        self.assertEqual(self.train(1, 2), 0)
+        self.assertEqual(self.pushed(coverage), "main")
+
     def test_screenshots_that_conflict_keep_the_later_copy_for_the_batch(self):
         w = self.world
         w.open_pr(1, {SHOT: "one\n"})
